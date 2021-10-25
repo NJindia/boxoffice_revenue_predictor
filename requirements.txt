@@ -1,0 +1,8 @@
+scrapy
+pandas
+numpy
+tqdm
+Twisted
+pydispatch
+imdbpy
+dateparser

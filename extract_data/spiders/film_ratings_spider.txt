@@ -1,0 +1,40 @@
+import logging
+import re
+import os
+import pandas as pd
+from tqdm import tqdm
+from urllib.parse import urljoin
+from scrapy import Spider
+from scrapy.shell import inspect_response
+from scrapy.http import Request
+from scrapy.crawler import CrawlerProcess
+from scrapy.utils.project import get_project_settings
+from pydispatch import dispatcher
+from scrapy import signals
+
+
+class IMDBSpider(Spider):
+    name = "film_ratings_spider"
+    allowed_domains = ["filmratings.com"]
+    custom_settings = {
+        'LOG_FILE':'film_ratings_spider.log',
+    }
+    def parse(self, response, tconst, title, year):
+        clean_title = re.sub('[\W_]+', ' ', title, flags=re.UNICODE)    
+        print(year, title, clean_title)
+
+    def start_requests(self):
+        tuples = self.df[['tconst','title','startYear']].to_numpy()
+        for tconst, title, startYear in tuples:
+            yield Request(url=self.start_url,callback=self.parse,
+            cb_kwargs={'tconst':tconst,'title':title,'year':startYear},
+            dont_filter=True,headers=[('User-Agent','Mozilla/5.0')])
+
+    def spider_closed(self, spider):
+        self.df.to_csv("mpaa2.csv")
+
+    def __init__(self, df):
+        # self.df = df.loc[df['mpaa']=='\\N', ['tconst','mpaa']]
+        self.start_url = 'https://www.filmratings.com/'  
+        self.df = df[['tconst','title','mpaa','startYear']]
+        dispatcher.connect(self.spider_closed, signal=signals.spider_closed)      
