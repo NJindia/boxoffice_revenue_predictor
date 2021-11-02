@@ -129,7 +129,6 @@ class BoxOfficeSpider(Spider):
     def __init__(self, df):
         self.df = df
         self.parent_path = dirname(dirname(abspath(__file__)))
-        print(self.parent_path)
         self.base_url = "https://www.boxofficemojo.com/"
         open(self.parent_path+'/logs/box_office_spider.log', 'wb').close()
         err_path = self.parent_path+"/data/errors.txt"

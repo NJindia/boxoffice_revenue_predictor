@@ -168,3 +168,5 @@ if __name__ == '__main__':
         lambda row: adjust_for_inflation(cpi_df, row['opening_revenue'], row['release_month'], row['release_year'],
                                          cpi_target_month, cpi_target_year), axis=1)
     feature_df.to_csv('features.csv')
+    with open('features.pickle','wb') as f:
+        pickle.dump(feature_df, f)

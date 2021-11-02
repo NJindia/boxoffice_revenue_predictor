@@ -6,3 +6,5 @@ Twisted
 pydispatch
 imdbpy
 dateparser
+scikit-learn
+matplotlib
