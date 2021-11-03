@@ -42,10 +42,6 @@ if __name__ == '__main__':
                 crew_df = df[df["directors"] != "\\N"]
             movie_raw_trimmed = pd.merge(basics_df, crew_df, on='tconst')
 
-            # print('Loading title.ratings.tsv.gz')
-            # with gzip.open("title.ratings.tsv.gz", "rt", encoding='utf-8') as f:
-            #     ratings_df = pd.read_csv(f, sep="\t", header=0, encoding='utf-8', dtype='str')
-
             print('Loading title.principals.tsv.gz')
             with gzip.open("data/title.principals.tsv.gz", "rt", encoding='utf-8') as f:
                 df = pd.read_csv(f, sep="\t", header=0, encoding='utf-8', dtype='str')
@@ -152,6 +148,13 @@ if __name__ == '__main__':
     m_df = m_df.drop(columns=['mpaa'])
     feature_df = pd.merge(feature_df, m_df, on='tconst')
 
+    # Get Star Power Values
+    directors_arr_raw = movie_data['directors']
+    directors_arr= directors_arr_raw.str.split(pat=',').to_numpy()
+    print(directors_arr)
+    print(directors_arr.shape)
+
+
     # Adjust monetary fields for inflation using CPI
     # Date that monetary values are converted to
     cpi_target_month = 1
@@ -168,5 +171,5 @@ if __name__ == '__main__':
         lambda row: adjust_for_inflation(cpi_df, row['opening_revenue'], row['release_month'], row['release_year'],
                                          cpi_target_month, cpi_target_year), axis=1)
     feature_df.to_csv('features.csv')
-    with open('features.pickle','wb') as f:
+    with open('./pickled_data/features.pickle','wb') as f:
         pickle.dump(feature_df, f)
