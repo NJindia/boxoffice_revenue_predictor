@@ -1,5 +1,7 @@
 #!/usr/bin/env python
+import datetime
 import gzip
+import math
 import pickle
 from warnings import simplefilter
 
@@ -101,7 +103,7 @@ if __name__ == '__main__':
         movie_data = pickle.load(f)
 
     # Get features
-    feature_df = pd.DataFrame(data=movie_data['tconst'], columns=['tconst'])
+    feature_df = pd.DataFrame(data=movie_data[['tconst', 'directors']], columns=['tconst', 'directors'])
     feature_df['release_year'] = pd.to_numeric(movie_data['startYear'])
     feature_df['budget'] = pd.to_numeric(movie_data['budget'].str.replace(r'\D+', '', regex=True))
     feature_df['opening_revenue'] = pd.to_numeric(movie_data['opening_revenue'].str.replace(r'\D+', '', regex=True))
@@ -112,6 +114,71 @@ if __name__ == '__main__':
     # Convert release_date to release month and day
     feature_df['release_month'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).month)
     feature_df['release_day'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).weekday())
+
+    # Adjust monetary fields for inflation using CPI
+    # Date that monetary values are converted to
+    cpi_target_month = 1
+    cpi_target_year = 2021
+
+    cpi_df = get_cpi_df()
+    feature_df['budget'] = feature_df.apply(
+        lambda row: adjust_for_inflation(cpi_df, row['budget'], row['release_month'], row['release_year'],
+                                         cpi_target_month, cpi_target_year), axis=1)
+    feature_df['domestic_revenue'] = feature_df.apply(
+        lambda row: adjust_for_inflation(cpi_df, row['domestic_revenue'], row['release_month'], row['release_year'],
+                                         cpi_target_month, cpi_target_year), axis=1)
+    feature_df['opening_revenue'] = feature_df.apply(
+        lambda row: adjust_for_inflation(cpi_df, row['opening_revenue'], row['release_month'], row['release_year'],
+                                         cpi_target_month, cpi_target_year), axis=1)
+
+    # Get Star Power Values
+    directors_arr_raw = np.unique(movie_data['directors'].to_numpy(dtype=str))
+    directors_lists = np.char.split(directors_arr_raw, sep=',')
+    directors = []
+    for director_list in directors_lists:
+        for name in director_list:
+            if name not in directors:
+                directors.append(name)
+    director_df = pd.DataFrame(columns=['director', 'sum_power', 'wciar_power'])
+    for director in directors:
+        director_stats_df = feature_df.loc[
+            feature_df['directors'].str.contains(director), ['directors', 'opening_revenue', 'release_year']]
+
+        revenue_sum = director_stats_df['opening_revenue'].sum()
+
+        curr_year = datetime.datetime.now().year
+        factor = .8
+        wciars = [iar * math.pow(.8, curr_year - year) for iar, year in
+                  zip(director_stats_df['opening_revenue'], director_stats_df['release_year'])]
+        power = np.array(wciars).sum()
+        row = {
+            'director': director,
+            'sum_power': revenue_sum,
+            'wciar_power': power
+        }
+        director_df = director_df.append(row, ignore_index=True)
+    director_df.to_csv('directors.csv')
+
+
+    def get_average_power(nconsts: list, df: pd.DataFrame):
+        total_s = 0
+        total_p = 0
+        n = 0
+        for nconst in nconsts:
+            total_s = total_s + df.loc[df['director'] == nconst,'sum_power'].to_numpy()[0]
+            total_p = total_p + df.loc[df['director'] == nconst,'wciar_power'].to_numpy()[0]
+            n=n+1
+        avg_s = total_s/n
+        avg_p = total_p / n
+        return [avg_s,avg_p]
+
+    feature_df['director_power_s'] = feature_df.apply(
+        lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1
+    )
+    feature_df['director_power_p'] = feature_df.apply(
+        lambda row: get_average_power(row['directors'].split(sep=','), director_df)[1], axis=1
+    )
+    feature_df = feature_df.drop(columns=['directors'])
 
     # Get distributor features
     distributors = pd.unique(movie_data['distributor'])
@@ -148,28 +215,10 @@ if __name__ == '__main__':
     m_df = m_df.drop(columns=['mpaa'])
     feature_df = pd.merge(feature_df, m_df, on='tconst')
 
-    # Get Star Power Values
-    directors_arr_raw = movie_data['directors']
-    directors_arr= directors_arr_raw.str.split(pat=',').to_numpy()
-    print(directors_arr)
-    print(directors_arr.shape)
-
-
-    # Adjust monetary fields for inflation using CPI
-    # Date that monetary values are converted to
-    cpi_target_month = 1
-    cpi_target_year = 2021
-
-    cpi_df = get_cpi_df()
-    feature_df['budget'] = feature_df.apply(
-        lambda row: adjust_for_inflation(cpi_df, row['budget'], row['release_month'], row['release_year'],
-                                         cpi_target_month, cpi_target_year), axis=1)
-    feature_df['domestic_revenue'] = feature_df.apply(
-        lambda row: adjust_for_inflation(cpi_df, row['domestic_revenue'], row['release_month'], row['release_year'],
-                                         cpi_target_month, cpi_target_year), axis=1)
-    feature_df['opening_revenue'] = feature_df.apply(
-        lambda row: adjust_for_inflation(cpi_df, row['opening_revenue'], row['release_month'], row['release_year'],
-                                         cpi_target_month, cpi_target_year), axis=1)
     feature_df.to_csv('features.csv')
-    with open('./pickled_data/features.pickle','wb') as f:
+    with open('./pickled_data/features.pickle', 'wb') as f:
         pickle.dump(feature_df, f)
+
+    graph_df = feature_df.merge(movie_data[['tconst', 'mpaa', 'distributor', 'opening_revenue', 'budget']], on='tconst',
+                                suffixes=('_cpi', '_base'))
+    graph_df.to_csv('graph_feats.csv')

@@ -34,28 +34,11 @@ if __name__ == '__main__':
         plt.legend(loc='best')
         plt.show()
 
-
-    def mpaa_graph(df):
-        # mpaa_df = df.filter(items=['opening_revenue', 'mpaa_g', 'mpaa_pg', 'mpaa_pg-13', 'mpaa_r', 'mpaa_nc-17', 'mpaa_unrated'])
-        x = df['mpaa']
-        y = df['opening_revenue']
-        plt.scatter(x, y)
-
-        # colors = ['red', 'blue', 'green', 'purple', 'yellow', 'orange']
-        # for col, color in zip(mpaa_cols, colors):
-        #     plt.scatter(df[col], y, color=color)
-        # print(mpaa_df)
-        plt.show()
-
-
     path = dirname(dirname(abspath(__file__))) + '/extract_data/pickled_data/'
     with open(path + 'features.pickle', 'rb') as f:
         df = pickle.load(f)
     with open(path + 'movie_data.pickle','rb') as f:
         df_raw = pickle.load(f)
-
-
-    # mpaa_graph(df_raw[['opening_revenue', 'mpaa']])
 
     X = df.drop(columns=['tconst', 'domestic_revenue', 'opening_revenue'])
     X_no_mpaa = X.drop(columns=['mpaa_g','mpaa_pg','mpaa_pg-13','mpaa_r','mpaa_nc-17','mpaa_unrated'])
@@ -70,17 +53,24 @@ if __name__ == '__main__':
         scores = cross_validate(model, X, y, scoring='r2', cv=5)
         print(f"Base Linear Regression Opening R2: {scores['test_score']}")
 
+# TODO: ONLY PREDICT ON LATEST MOVIES, POWER IS NOT GOOD FOR PREDICTING OLDER MOVIES
 
     # Base test
     regr = linear_model.LinearRegression()
     test_model(regr, X, y_opening)
     test_model(regr, X_no_mpaa, y_opening)
+    X_sum = X.drop(columns=['director_power_p'])
+    X_power = X.drop(columns=['director_power_s'])
+    test_model(regr, X_sum, y_opening)
+    test_model(regr, X_power, y_opening)
     kernel = 'rbf'
     c = 1.0
     eps = .2
     svr = SVR(kernel=kernel, C=c, epsilon=eps)
     test_model(svr, X, y_opening)
     test_model(svr, X_no_mpaa, y_opening)
+    test_model(svr, X_sum, y_opening)
+    test_model(svr, X_power, y_opening)
     # ridge = linear_model.Ridge()
     # test_model(ridge, X, y_opening)
     # lasso = linear_model.Lasso()
