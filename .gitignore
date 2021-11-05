@@ -1,2 +1,3 @@
 /venv/
 .idea
+/extract_data/data/data.tsv

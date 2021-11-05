@@ -13,16 +13,16 @@ from scrapy.utils.project import get_project_settings
 from twisted.internet import reactor, defer
 
 from spiders import imdb_spider, box_office_spider
-from util import adjust_for_inflation, get_cpi_df
+from utils.util import adjust_for_inflation, get_cpi_df
 
 if __name__ == '__main__':
     pd.options.mode.chained_assignment = None
     simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
-    get_raw_data = False
+    get_raw_data = True
     scrape_boxofficemojo = False
     scrape_mpaa = False
-    load_imdb_data = False
+    load_imdb_data = True
 
     if get_raw_data:
         if load_imdb_data:
@@ -47,11 +47,15 @@ if __name__ == '__main__':
             print('Loading title.principals.tsv.gz')
             with gzip.open("data/title.principals.tsv.gz", "rt", encoding='utf-8') as f:
                 df = pd.read_csv(f, sep="\t", header=0, encoding='utf-8', dtype='str')
-                df = df[['tconst', 'nconst']]
-                tconsts = pd.unique(df['tconst'])
+                nconsts = df[['tconst', 'nconst']]
+                actors = df.loc[(df['category'] != 'director') & (df['category'] != 'writer'), ['tconst', 'nconst']]
+                #Todo, rename nconst to actors
+                tconsts = pd.unique(nconsts['tconst'])
+                # Remove titles with no cast
                 filtered_tconsts = pd.merge(movie_raw_trimmed, pd.DataFrame(data={'tconst': tconsts}), on='tconst')[
                     'tconst']
-                c_df = pd.merge(filtered_tconsts, df, on='tconst', how='left')
+                a_df = pd.merge(filtered_tconsts, actors, on='tconst', how='left')
+                c_df = pd.merge(a_df, nconsts, on='tconst', how='left')
             cast_df = c_df.groupby('tconst', as_index=False).agg({'nconst': ','.join})
 
             imdb_data = pd.merge(movie_raw_trimmed, cast_df, on='tconst')
@@ -59,11 +63,6 @@ if __name__ == '__main__':
                 pickle.dump(imdb_data, f)
             # ratings_data = pd.merge(imdb_data, ratings_df, on='tconst')
             # ratings_data.to_csv("ratings.csv", encoding='utf-8-sig')
-
-            # TODO CHECK IF EVERY MEMBER OF CAST IS DEAD
-            # with gzip.open("name.basics.tsv.gz", "rt", encoding='utf-8') as f:
-            #     df = pd.read_csv(f, sep="\t", header=0, encoding='utf-8', dtype='str')
-            #     names_df = df.drop(columns=['primaryProfession', 'knownForTitles'])
         else:
             with open('pickled_data/imdb_movie_data.pickle', 'rb') as f:
                 imdb_data = pickle.load(f)
@@ -98,6 +97,13 @@ if __name__ == '__main__':
         movie_data.to_csv("movie_data.csv", encoding='utf-8-sig')
         with open('pickled_data/movie_data.pickle', 'wb') as f:
             pickle.dump(movie_data, f)
+    # TODO CHECK IF EVERY MEMBER OF CAST IS DEAD
+    print('Loading name.basics.tsv.gz')
+    with gzip.open("name.basics.tsv.gz", "rt", encoding='utf-8') as f:
+        df = pd.read_csv(f, sep="\t", header=0, encoding='utf-8', dtype='str')
+        names_df = df[['nconst', 'deathYear']]
+    dead = names_df.loc[names_df['deathYear'] != '\\N', 'nconst'].to_numpy()
+    print(len(dead))
 
     with open('pickled_data/movie_data.pickle', 'rb') as f:
         movie_data = pickle.load(f)
@@ -165,12 +171,13 @@ if __name__ == '__main__':
         total_p = 0
         n = 0
         for nconst in nconsts:
-            total_s = total_s + df.loc[df['director'] == nconst,'sum_power'].to_numpy()[0]
-            total_p = total_p + df.loc[df['director'] == nconst,'wciar_power'].to_numpy()[0]
-            n=n+1
-        avg_s = total_s/n
+            total_s = total_s + df.loc[df['director'] == nconst, 'sum_power'].to_numpy()[0]
+            total_p = total_p + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
+            n = n + 1
+        avg_s = total_s / n
         avg_p = total_p / n
-        return [avg_s,avg_p]
+        return [avg_s, avg_p]
+
 
     feature_df['director_power_s'] = feature_df.apply(
         lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1
