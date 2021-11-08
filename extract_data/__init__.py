@@ -16,13 +16,14 @@ from spiders import imdb_spider, box_office_spider
 from utils.util import adjust_for_inflation, get_cpi_df
 
 if __name__ == '__main__':
+    SPLIT_RATIO = 0.8
     pd.options.mode.chained_assignment = None
     simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
-    get_raw_data = True
+    get_raw_data = False
     scrape_boxofficemojo = False
     scrape_mpaa = False
-    load_imdb_data = True
+    load_imdb_data = False
 
     if get_raw_data:
         if load_imdb_data:
@@ -49,16 +50,28 @@ if __name__ == '__main__':
                 df = pd.read_csv(f, sep="\t", header=0, encoding='utf-8', dtype='str')
                 nconsts = df[['tconst', 'nconst']]
                 actors = df.loc[(df['category'] != 'director') & (df['category'] != 'writer'), ['tconst', 'nconst']]
-                #Todo, rename nconst to actors
+                actors = actors.rename(columns={"nconst": "actors"})
                 tconsts = pd.unique(nconsts['tconst'])
                 # Remove titles with no cast
                 filtered_tconsts = pd.merge(movie_raw_trimmed, pd.DataFrame(data={'tconst': tconsts}), on='tconst')[
                     'tconst']
-                a_df = pd.merge(filtered_tconsts, actors, on='tconst', how='left')
-                c_df = pd.merge(a_df, nconsts, on='tconst', how='left')
-            cast_df = c_df.groupby('tconst', as_index=False).agg({'nconst': ','.join})
+
+                c_df = pd.merge(filtered_tconsts, nconsts, on='tconst', how='left').groupby('tconst',
+                                                                                            as_index=False).agg(
+                    {'nconst': ','.join})
+                actors_m = actors.groupby('tconst', as_index=False).agg({'actors': ','.join})
+            cast_df = pd.merge(c_df, actors_m, on='tconst', how='left')
 
             imdb_data = pd.merge(movie_raw_trimmed, cast_df, on='tconst')
+
+            # TODO CHECK IF EVERY MEMBER OF CAST IS DEAD
+            # print('Loading name.basics.tsv.gz')
+            # with gzip.open("data/name.basics.tsv.gz", "rt", encoding='utf-8') as f:
+            #     df = pd.read_csv(f, sep="\t", header=0, encoding='utf-8', dtype='str')
+            #     names_df = df[['nconst', 'deathYear']]
+            # dead = names_df.loc[names_df['deathYear'] != '\\N', 'nconst'].to_numpy()
+            # imdb_data = imdb_data_untrimmed.apply(lambda row: row if np.all(np.in1d(row['nconst'].split(sep=','),dead, invert=True)) else np.nan, axis=1).dropna()
+
             with open('pickled_data/imdb_movie_data.pickle', 'wb') as f:
                 pickle.dump(imdb_data, f)
             # ratings_data = pd.merge(imdb_data, ratings_df, on='tconst')
@@ -97,13 +110,6 @@ if __name__ == '__main__':
         movie_data.to_csv("movie_data.csv", encoding='utf-8-sig')
         with open('pickled_data/movie_data.pickle', 'wb') as f:
             pickle.dump(movie_data, f)
-    # TODO CHECK IF EVERY MEMBER OF CAST IS DEAD
-    print('Loading name.basics.tsv.gz')
-    with gzip.open("name.basics.tsv.gz", "rt", encoding='utf-8') as f:
-        df = pd.read_csv(f, sep="\t", header=0, encoding='utf-8', dtype='str')
-        names_df = df[['nconst', 'deathYear']]
-    dead = names_df.loc[names_df['deathYear'] != '\\N', 'nconst'].to_numpy()
-    print(len(dead))
 
     with open('pickled_data/movie_data.pickle', 'rb') as f:
         movie_data = pickle.load(f)
@@ -120,12 +126,12 @@ if __name__ == '__main__':
     # Convert release_date to release month and day
     feature_df['release_month'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).month)
     feature_df['release_day'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).weekday())
+    feature_df['release_date'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x))
+    feature_df = feature_df.sort_values(by='release_date', axis=0, ascending=True).drop(columns=['release_date'])
 
     # Adjust monetary fields for inflation using CPI
-    # Date that monetary values are converted to
     cpi_target_month = 1
     cpi_target_year = 2021
-
     cpi_df = get_cpi_df()
     feature_df['budget'] = feature_df.apply(
         lambda row: adjust_for_inflation(cpi_df, row['budget'], row['release_month'], row['release_year'],
@@ -136,56 +142,6 @@ if __name__ == '__main__':
     feature_df['opening_revenue'] = feature_df.apply(
         lambda row: adjust_for_inflation(cpi_df, row['opening_revenue'], row['release_month'], row['release_year'],
                                          cpi_target_month, cpi_target_year), axis=1)
-
-    # Get Star Power Values
-    directors_arr_raw = np.unique(movie_data['directors'].to_numpy(dtype=str))
-    directors_lists = np.char.split(directors_arr_raw, sep=',')
-    directors = []
-    for director_list in directors_lists:
-        for name in director_list:
-            if name not in directors:
-                directors.append(name)
-    director_df = pd.DataFrame(columns=['director', 'sum_power', 'wciar_power'])
-    for director in directors:
-        director_stats_df = feature_df.loc[
-            feature_df['directors'].str.contains(director), ['directors', 'opening_revenue', 'release_year']]
-
-        revenue_sum = director_stats_df['opening_revenue'].sum()
-
-        curr_year = datetime.datetime.now().year
-        factor = .8
-        wciars = [iar * math.pow(.8, curr_year - year) for iar, year in
-                  zip(director_stats_df['opening_revenue'], director_stats_df['release_year'])]
-        power = np.array(wciars).sum()
-        row = {
-            'director': director,
-            'sum_power': revenue_sum,
-            'wciar_power': power
-        }
-        director_df = director_df.append(row, ignore_index=True)
-    director_df.to_csv('directors.csv')
-
-
-    def get_average_power(nconsts: list, df: pd.DataFrame):
-        total_s = 0
-        total_p = 0
-        n = 0
-        for nconst in nconsts:
-            total_s = total_s + df.loc[df['director'] == nconst, 'sum_power'].to_numpy()[0]
-            total_p = total_p + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
-            n = n + 1
-        avg_s = total_s / n
-        avg_p = total_p / n
-        return [avg_s, avg_p]
-
-
-    feature_df['director_power_s'] = feature_df.apply(
-        lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1
-    )
-    feature_df['director_power_p'] = feature_df.apply(
-        lambda row: get_average_power(row['directors'].split(sep=','), director_df)[1], axis=1
-    )
-    feature_df = feature_df.drop(columns=['directors'])
 
     # Get distributor features
     distributors = pd.unique(movie_data['distributor'])
@@ -221,6 +177,65 @@ if __name__ == '__main__':
         m_df.loc[m_df['mpaa'] == rating, col_name] = 1
     m_df = m_df.drop(columns=['mpaa'])
     feature_df = pd.merge(feature_df, m_df, on='tconst')
+
+    # #todo Train:Test SPLIT
+    # split_idx = int(len(feature_df)*SPLIT_RATIO)
+    # train_df = feature_df.iloc[0:split_idx]
+    # test_df = feature_df.iloc[split_idx:,]
+    #
+    # # Get Director Star Power Values
+    # directors_arr_raw = np.unique(movie_data['directors'].to_numpy(dtype=str))
+    # directors_lists = np.char.split(directors_arr_raw, sep=',')
+    # directors = []
+    # for director_list in directors_lists:
+    #     for name in director_list:
+    #         if name not in directors:
+    #             directors.append(name)
+    # director_df = pd.DataFrame(columns=['director', 'sum_power', 'wciar_power'])
+    # for director in directors:
+    #     director_stats_df = train_df.loc[
+    #         train_df['directors'].str.contains(director), ['directors', 'opening_revenue', 'release_year']]
+    #
+    #     revenue_sum = director_stats_df['opening_revenue'].sum()
+    #
+    #     curr_year = datetime.datetime.now().year
+    #     factor = .8
+    #     wciars = [iar * math.pow(.8, curr_year - year) for iar, year in
+    #               zip(director_stats_df['opening_revenue'], director_stats_df['release_year'])]
+    #     power = np.array(wciars).sum()
+    #     row = {
+    #         'director': director,
+    #         'sum_power': revenue_sum,
+    #         'wciar_power': power
+    #     }
+    #     director_df = director_df.append(row, ignore_index=True)
+    # director_df.to_csv('directors.csv')
+    #
+    #
+    # def get_average_power(nconsts: list, df: pd.DataFrame):
+    #     total_s = 0
+    #     total_p = 0
+    #     n = 0
+    #     for nconst in nconsts:
+    #         total_s = total_s + df.loc[df['director'] == nconst, 'sum_power'].to_numpy()[0]
+    #         total_p = total_p + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
+    #         n = n + 1
+    #     avg_s = total_s / n
+    #     avg_p = total_p / n
+    #     return [avg_s, avg_p]
+    #
+    #
+    # feature_df['director_power_s'] = feature_df.apply(
+    #     lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1
+    # )
+    # feature_df['director_power_p'] = feature_df.apply(
+    #     lambda row: get_average_power(row['directors'].split(sep=','), director_df)[1], axis=1
+    # )
+    # feature_df = feature_df.drop(columns=['directors'])
+    #
+    #
+
+
 
     feature_df.to_csv('features.csv')
     with open('./pickled_data/features.pickle', 'wb') as f:
