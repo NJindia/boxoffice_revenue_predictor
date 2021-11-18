@@ -115,10 +115,12 @@ if __name__ == '__main__':
             train_df = train_df.drop(columns=['directors'])
             return train_df
 
-        minmax_scale_cols = ['release_year', 'opening_theaters', 'release_day', 'runtime_minutes']
-        for col in minmax_scale_cols:
-            try: data[col] = minmax_scale(data[col], feature_range=(0, 1))
-            except KeyError: pass
+        def min0_max1_scale(data: pd.DataFrame):
+            minmax_scale_cols = ['release_year', 'opening_theaters', 'release_day', 'runtime_minutes']
+            for col in minmax_scale_cols:
+                try: data[col] = minmax_scale(data[col], feature_range=(0, 1))
+                except KeyError: pass
+            return data
 
         split_indices = TimeSeriesSplit().split(data)
         stats_sum = Counter()
@@ -127,13 +129,14 @@ if __name__ == '__main__':
             train = data.iloc[train_indices]
             director_df = get_director_df(train)
 
-            test = data.iloc[test_indices]
+            train_scaled = min0_max1_scale(train)
+            test_scaled = min0_max1_scale(data.iloc[test_indices])
 
-            y_train = train['opening_revenue'].apply(lambda row: math.log(row))
-            y_test = test['opening_revenue'].apply(lambda row: math.log(row))
+            y_train = train_scaled['opening_revenue'].apply(lambda row: math.log(row))
+            y_test = test_scaled['opening_revenue'].apply(lambda row: math.log(row))
 
             X_train = train.drop(columns=['opening_revenue', 'directors'])
-            X_test = test.drop(columns=['opening_revenue', 'directors'])
+            X_test = min0_max1_scale(data.iloc[test_indices].drop(columns=['opening_revenue', 'directors']))
 
             X_train_power = add_director_star_power(train, director_df)
 
