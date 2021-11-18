@@ -1,7 +1,5 @@
 #!/usr/bin/env python
-import datetime
 import gzip
-import math
 import pickle
 from warnings import simplefilter
 
@@ -123,9 +121,8 @@ if __name__ == '__main__':
     feature_df['opening_theaters'] = pd.to_numeric(movie_data['opening_theaters'].str.replace(r'\D+', '', regex=True))
     feature_df['runtime_minutes'] = pd.to_numeric(movie_data['runtimeMinutes'].str.replace(r'\D+', '', regex=True))
 
-    # Convert release_date to release month and day
+    # Convert release_date to release month and sort by release date
     feature_df['release_month'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).month)
-    feature_df['release_day'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).weekday())
     feature_df['release_date'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x))
     feature_df = feature_df.sort_values(by='release_date', axis=0, ascending=True).drop(columns=['release_date'])
 
@@ -168,6 +165,16 @@ if __name__ == '__main__':
     g_df = g_df.drop(columns=['genres'])
     feature_df = pd.merge(feature_df, g_df, on='tconst')
 
+    # Get Release Day features
+    movie_data['release_day'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).weekday())
+    m_df = movie_data[['tconst', 'release_day']]
+    for i in range(7):
+        col_name = 'day_' + str(i)
+        m_df[col_name] = 0
+        m_df.loc[m_df['release_day'] == i, col_name] = 1
+    m_df = m_df.drop(columns=['release_day'])
+    feature_df = pd.merge(feature_df, m_df, on='tconst')
+
     # Get MPAA features
     mpaa_ratings = pd.unique(movie_data['mpaa'])
     m_df = movie_data[['tconst', 'mpaa']]
@@ -177,65 +184,6 @@ if __name__ == '__main__':
         m_df.loc[m_df['mpaa'] == rating, col_name] = 1
     m_df = m_df.drop(columns=['mpaa'])
     feature_df = pd.merge(feature_df, m_df, on='tconst')
-
-    # #todo Train:Test SPLIT
-    # split_idx = int(len(feature_df)*SPLIT_RATIO)
-    # train_df = feature_df.iloc[0:split_idx]
-    # test_df = feature_df.iloc[split_idx:,]
-    #
-    # # Get Director Star Power Values
-    # directors_arr_raw = np.unique(movie_data['directors'].to_numpy(dtype=str))
-    # directors_lists = np.char.split(directors_arr_raw, sep=',')
-    # directors = []
-    # for director_list in directors_lists:
-    #     for name in director_list:
-    #         if name not in directors:
-    #             directors.append(name)
-    # director_df = pd.DataFrame(columns=['director', 'sum_power', 'wciar_power'])
-    # for director in directors:
-    #     director_stats_df = train_df.loc[
-    #         train_df['directors'].str.contains(director), ['directors', 'opening_revenue', 'release_year']]
-    #
-    #     revenue_sum = director_stats_df['opening_revenue'].sum()
-    #
-    #     curr_year = datetime.datetime.now().year
-    #     factor = .8
-    #     wciars = [iar * math.pow(.8, curr_year - year) for iar, year in
-    #               zip(director_stats_df['opening_revenue'], director_stats_df['release_year'])]
-    #     power = np.array(wciars).sum()
-    #     row = {
-    #         'director': director,
-    #         'sum_power': revenue_sum,
-    #         'wciar_power': power
-    #     }
-    #     director_df = director_df.append(row, ignore_index=True)
-    # director_df.to_csv('directors.csv')
-    #
-    #
-    # def get_average_power(nconsts: list, df: pd.DataFrame):
-    #     total_s = 0
-    #     total_p = 0
-    #     n = 0
-    #     for nconst in nconsts:
-    #         total_s = total_s + df.loc[df['director'] == nconst, 'sum_power'].to_numpy()[0]
-    #         total_p = total_p + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
-    #         n = n + 1
-    #     avg_s = total_s / n
-    #     avg_p = total_p / n
-    #     return [avg_s, avg_p]
-    #
-    #
-    # feature_df['director_power_s'] = feature_df.apply(
-    #     lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1
-    # )
-    # feature_df['director_power_p'] = feature_df.apply(
-    #     lambda row: get_average_power(row['directors'].split(sep=','), director_df)[1], axis=1
-    # )
-    # feature_df = feature_df.drop(columns=['directors'])
-    #
-    #
-
-
 
     feature_df.to_csv('features.csv')
     with open('./pickled_data/features.pickle', 'wb') as f:

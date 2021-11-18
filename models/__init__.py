@@ -1,18 +1,21 @@
 #!/usr/bin/env python
+import datetime
 import math
 import pickle
+from collections import Counter
 from os.path import dirname, abspath
+from warnings import simplefilter
 
 import numpy as np
+import pandas as pd
 from matplotlib import pyplot as plt
-from sklearn import linear_model
-from sklearn import metrics
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVR
-from sklearn.model_selection import GridSearchCV
+from sklearn import linear_model, metrics
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import StandardScaler, minmax_scale
 
 if __name__ == '__main__':
+    pd.options.mode.chained_assignment = None
+
     SPLIT_RATIO = .6
 
 
@@ -28,10 +31,9 @@ if __name__ == '__main__':
         cum_var_exp = np.cumsum(var_exp)
 
         # plot explained variances
-        plt.bar(range(1, X_train.shape[1] + 1), var_exp, alpha=0.5,
-                align='center', label='individual explained variance')
-        plt.step(range(1, X_train.shape[1] + 1), cum_var_exp, where='mid',
-                 label='cumulative explained variance')
+        plt.bar(range(1, X_train.shape[1] + 1), var_exp, alpha=0.5, align='center',
+                label='individual explained variance')
+        plt.step(range(1, X_train.shape[1] + 1), cum_var_exp, where='mid', label='cumulative explained variance')
         plt.ylabel('Explained variance ratio')
         plt.xlabel('Principal component index')
         plt.legend(loc='best')
@@ -44,124 +46,142 @@ if __name__ == '__main__':
     with open(path + 'movie_data.pickle', 'rb') as f:
         df_raw = pickle.load(f)
 
-    X = df.drop(columns=['tconst', 'domestic_revenue', 'opening_revenue', 'directors'])
-    split_idx = int(len(X) * SPLIT_RATIO)
-
-
-    def _get_train_test(X):
-        X_train = X.iloc[0:split_idx]
-        X_test = X.iloc[split_idx:, ]
-        return X_train, X_test
-
-
-    def _get_cv_iterator(X, n_folds):
-        X_train_shuffled = X.iloc[:split_idx].sample(frac=1).reset_index(drop=True)
-        X_test_shuffled = X.iloc[split_idx:, ].sample(frac=1).reset_index(drop=True)
-        test_split_len = math.ceil(len(X_test_shuffled) / n_folds)
-        train_split_len = math.ceil(len(X_train_shuffled) / n_folds)
-        X_test_splits = []
-        X_train_splits = []
-        for i in range(n_folds - 1):
-            test_split = X_test_shuffled.iloc[test_split_len * i:test_split_len * (i + 1)]
-            X_test_splits.append(test_split)
-            train_split = X_train_shuffled.iloc[train_split_len * i:train_split_len * (i + 1)]
-            X_train_splits.append(train_split)
-        X_test_splits.append(X_test_shuffled.iloc[test_split_len * (n_folds - 1):])
-        X_train_splits.append(X_train_shuffled.iloc[train_split_len * (n_folds - 1):])
-
-        iterator = []
-        for train_split, test_split in zip(X_train_splits, X_test_splits):
-            iterator.append(zip(train_split, test_split))
-
-
+    data = df.drop(columns=['tconst', 'domestic_revenue'])
     # eigen(X)
 
-    y_domestic = df['domestic_revenue']
-    y_opening = df['opening_revenue']
-    y_opening = y_opening.apply(lambda row: math.log(row))
-    y_train = y_opening.iloc[0:split_idx]
-    y_test = y_opening.iloc[split_idx:, ]
-    pca = PCA()
-    pca.fit(X)
+
+    def print_metrics(stats: dict):
+        print(f"Mean Squared Log Error={stats['Mean Squared Log Error']}")
+        print(f"Root Mean Squared Log Error={stats['Root Mean Squared Log Error']}")
+        print(f"Mean Squared Error={stats['Mean Squared Error']}")
+        print(f"Root Mean Squared Error={stats['Root Mean Squared Error']}")
+        print(f"R^2={stats['R^2']}")
 
 
     # FROM https://github.com/PermanAtayev/Movie-revenue-prediction/blob/master/movie_revenue_predict.ipynb
-    def show_metrics(y_test, y_pred):
-        print("Mean Squared Log Error=" + str(metrics.mean_squared_log_error(y_test, y_pred)))
-        print("Root Mean Squared Log Error=" + str(np.sqrt(metrics.mean_squared_log_error(y_test, y_pred))))
-        print("Mean Squared Error =" + str(metrics.mean_squared_error(y_test, y_pred)))
-        print("Root Mean Squared Error=" + str(np.sqrt(metrics.mean_squared_error(y_test, y_pred))))
-        print("R^2=" + str(metrics.r2_score(y_test, y_pred)))
+    def get_metrics(y_test, y_pred) -> dict:
+        msle = metrics.mean_squared_log_error(y_test, y_pred)
+        rmsle = np.sqrt(metrics.mean_squared_log_error(y_test, y_pred))
+        mse = metrics.mean_squared_error(y_test, y_pred)
+        rmse = np.sqrt(metrics.mean_squared_error(y_test, y_pred))
+        r2 = metrics.r2_score(y_test, y_pred)
+        return {"Mean Squared Log Error": msle, "Root Mean Squared Log Error": rmsle, "Mean Squared Error": mse,
+                "Root Mean Squared Error": rmse, "R^2": r2}
 
 
-    def test_model(model, X_train, y_train, X_test, y_test):
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-        show_metrics(y_test, y_pred)
+    def test_model(model, data):
+        def get_director_df(train_df: pd.DataFrame):
+            # Get list of director nconsts
+            directors_arr_raw = np.unique(train_df['directors'].to_numpy(dtype=str))
+            directors_lists = np.char.split(directors_arr_raw, sep=',')
+            directors = []
+            for director_list in directors_lists:
+                for name in director_list:
+                    if name not in directors:
+                        directors.append(name)
+            director_df = pd.DataFrame(columns=['director', 'sum_power', 'wciar_power'])
+            for director in directors:
+                # Get all movies with director
+                director_stats_df = train_df.loc[
+                    train_df['directors'].str.contains(director), ['directors', 'opening_revenue', 'release_year']]
 
+                revenue_sum = director_stats_df['opening_revenue'].sum()
 
-    # TODO: ONLY PREDICT ON LATEST MOVIES, POWER IS NOT GOOD FOR PREDICTING OLDER MOVIES
-    _get_cv_iterator(X, 4)
+                curr_year = datetime.datetime.now().year
+                wciars = [iar * math.pow(.8, curr_year - year) for iar, year in
+                          zip(director_stats_df['opening_revenue'], director_stats_df['release_year'])]
+                power = (np.array(wciars).sum())
+                row = {'director': director, 'sum_power': revenue_sum, 'wciar_power': power}
+                director_df = director_df.append(row, ignore_index=True)
+            return director_df
+
+        def add_director_star_power(train_df: pd.DataFrame, director_df: pd.DataFrame):
+            def get_average_power(nconsts: list, df: pd.DataFrame):
+                total_s = 0
+                total_p = 0
+                n = 0
+                for nconst in nconsts:
+                    total_s = total_s + df.loc[df['director'] == nconst, 'sum_power'].to_numpy()[0]
+                    total_p = total_p + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
+                    n = n + 1
+                avg_s = total_s / n
+                avg_p = total_p / n
+                return [avg_s, avg_p]
+
+            train_df['director_power_s'] = train_df.apply(
+                lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1)
+            train_df['director_power_p'] = train_df.apply(
+                lambda row: get_average_power(row['directors'].split(sep=','), director_df)[1], axis=1)
+            train_df = train_df.drop(columns=['directors'])
+            return train_df
+
+        def min0_max1_scale(data: pd.DataFrame):
+            minmax_scale_cols = ['release_year', 'opening_theaters', 'release_day', 'runtime_minutes']
+            for col in minmax_scale_cols:
+                try: data[col] = minmax_scale(data[col], feature_range=(0, 1))
+                except KeyError: pass
+            return data
+
+        split_indices = TimeSeriesSplit().split(data)
+        stats_sum = Counter()
+        n = 0
+        for train_indices, test_indices in split_indices:
+            train = data.iloc[train_indices]
+            director_df = get_director_df(train)
+
+            train_scaled = min0_max1_scale(train)
+            test_scaled = min0_max1_scale(data.iloc[test_indices])
+
+            y_train = train_scaled['opening_revenue'].apply(lambda row: math.log(row))
+            y_test = test_scaled['opening_revenue'].apply(lambda row: math.log(row))
+
+            X_train = train.drop(columns=['opening_revenue', 'directors'])
+            X_test = min0_max1_scale(data.iloc[test_indices].drop(columns=['opening_revenue', 'directors']))
+
+            X_train_power = add_director_star_power(train, director_df)
+
+            model.fit(X_train, y_train)
+            y_pred = model.predict(X_test)
+            stats_sum += Counter(get_metrics(y_test, y_pred))
+            n += 1
+        stats = {k: v / n for k, v in stats_sum.items()}
+        print_metrics(stats)
+
     # Base test
     regr = linear_model.LinearRegression()
-    X_train, X_test = _get_train_test(X)
-    print('Lin Reg Train Baseline')
-    test_model(regr, X_train, y_train, X_train, y_train)
 
     print('Lin Reg Baseline')
-    test_model(regr, X_train, y_train, X_test, y_test)
+    test_model(regr, data)
 
     print('Lin Reg No MPAA')
-    X_feature_eval_train, X_feature_eval_test = _get_train_test(
-        X.drop(columns=['mpaa_g', 'mpaa_pg', 'mpaa_pg-13', 'mpaa_r', 'mpaa_nc-17', 'mpaa_unrated']))
-    test_model(regr, X_feature_eval_train, y_train, X_feature_eval_test, y_test)
+    test_model(regr, data.drop(columns=['mpaa_g', 'mpaa_pg', 'mpaa_pg-13', 'mpaa_r', 'mpaa_nc-17', 'mpaa_unrated']))
 
     print('Lin Reg No Genres')
-    genre_cols = [col_name for col_name in X if 'genre_' in col_name]
-    X_feature_eval_train, X_feature_eval_test = _get_train_test(X.drop(columns=genre_cols))
-    test_model(regr, X_feature_eval_train, y_train, X_feature_eval_test, y_test)
+    genre_cols = [col_name for col_name in data if 'genre_' in col_name]
+    test_model(regr, data.drop(columns=genre_cols))
 
     print('Lin Reg No Distributors')
-    distributor_cols = [col_name for col_name in X if 'distributor_' in col_name]
-    X_feature_eval_train, X_feature_eval_test = _get_train_test(X.drop(columns=distributor_cols))
-    test_model(regr, X_feature_eval_train, y_train, X_feature_eval_test, y_test)
+    distributor_cols = [col_name for col_name in data if 'distributor_' in col_name]
+    test_model(regr, data.drop(columns=distributor_cols))
 
     print('Lin Reg No Opening Theatres')
-    X_feature_eval_train, X_feature_eval_test = _get_train_test(X.drop(columns=['opening_theaters']))
-    test_model(regr, X_feature_eval_train, y_train, X_feature_eval_test, y_test)
+    test_model(regr, data.drop(columns=['opening_theaters']))
 
     print('Lin Reg No Runtime')
-    X_feature_eval_train, X_feature_eval_test = _get_train_test(X.drop(columns=['runtime_minutes']))
-    test_model(regr, X_feature_eval_train, y_train, X_feature_eval_test, y_test)
+    test_model(regr, data.drop(columns=['runtime_minutes']))
 
     print('Lin Reg No Release Day')
-    X_feature_eval_train, X_feature_eval_test = _get_train_test(X.drop(columns=['release_day']))
-    test_model(regr, X_feature_eval_train, y_train, X_feature_eval_test, y_test)
+    release_cols = [col_name for col_name in data if 'day_' in col_name]
+    test_model(regr, data.drop(columns=release_cols))
 
     print('Lin Reg No Release Month')
-    X_feature_eval_train, X_feature_eval_test = _get_train_test(X.drop(columns=['release_month']))
-    test_model(regr, X_feature_eval_train, y_train, X_feature_eval_test, y_test)
+    test_model(regr, data.drop(columns=['release_month']))
 
     print('Lin Reg No Release Year')
-    X_feature_eval_train, X_feature_eval_test = _get_train_test(X.drop(columns=['release_year']))
-    test_model(regr, X_feature_eval_train, y_train, X_feature_eval_test, y_test)
+    test_model(regr, data.drop(columns=['release_year']))
 
-    # X_sum = X.drop(columns=['director_power_p'])
-    # X_power = X.drop(columns=['director_power_s'])
-    # test_model(regr, X_sum, y_opening)
-    # test_model(regr, X_power, y_opening)
+    # X_sum = X.drop(columns=['director_power_p'])  # X_power = X.drop(columns=['director_power_s'])  # test_model(regr, X_sum)  # test_model(regr, X_power)
 
-    params = [
-        {"kernel": ["rbf"], "gamma": np.logspace(-9, 9, 19), "C": np.logspace(-9, 9, 19), "epsilon": range(0.1, 2, .1)}
-    ]
+    # params = [  #     {"kernel": ["rbf"], "gamma": np.logspace(-9, 9, 19), "C": np.logspace(-9, 9, 19), "epsilon": range(0.1, 2, .1)}  # ]
 
-    grid_reg = GridSearchCV(SVR(), params, n_jobs=-1, cv=cv)
-    grid_reg.fit(X_train, y_train)
-    print('SVR')
-    test_model(svr, X_train, y_train, X_test, y_test)
-    # test_model(svr, X_sum, y_opening)
-    # test_model(svr, X_power, y_opening)
-    # ridge = linear_model.Ridge()
-    # test_model(ridge, X, y_opening)
-    # lasso = linear_model.Lasso()
-    # test_model(lasso, X, y_opening)
+    # grid_reg = GridSearchCV(SVR(), params, n_jobs=-1, cv=cv)  # grid_reg.fit(X_train, y_train)  # print('SVR')  # test_model(svr, X_train, y_train, X_test, y_test)  # test_model(svr, X_sum)  # test_model(svr, X_power)  # ridge = linear_model.Ridge()  # test_model(ridge, X)  # lasso = linear_model.Lasso()  # test_model(lasso, X)
