@@ -70,6 +70,23 @@ if __name__ == '__main__':
 
 
     def test_model(model, data):
+        def get_average_power(nconsts: list, df: pd.DataFrame):
+            total_s = 0
+            total_p = 0
+            n = 0
+            for nconst in nconsts:
+                if len(df.loc[df['director'] == nconst]) == 0:
+                    # Todo HANDLE MISSING DIRECTOR
+                    return [None, None]
+                    pass
+                else:
+                    total_s = total_s + df.loc[df['director'] == nconst, 'sum_power'].to_numpy()[0]
+                    total_p = total_p + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
+                n = n + 1
+            avg_s = total_s / n
+            avg_p = total_p / n
+            return [avg_s, avg_p]
+
         def get_director_df(train_df: pd.DataFrame):
             # Get list of director nconsts
             directors_arr_raw = np.unique(train_df['directors'].to_numpy(dtype=str))
@@ -83,39 +100,28 @@ if __name__ == '__main__':
             for director in directors:
                 # Get all movies with director
                 director_stats_df = train_df.loc[
-                    train_df['directors'].str.contains(director), ['directors', 'opening_revenue', 'release_year']]
+                    train_df['directors'].str.contains(director), ['directors', 'opening_revenue', 'release_year_temp']]
 
                 revenue_sum = director_stats_df['opening_revenue'].sum()
 
                 curr_year = datetime.datetime.now().year
-                wciars = [iar * math.pow(.8, curr_year - year) for iar, year in
-                          zip(director_stats_df['opening_revenue'], director_stats_df['release_year'])]
+                wciars = [math.sqrt(iar * math.pow(.8, curr_year - year)) for iar, year in
+                          zip(director_stats_df['opening_revenue'], director_stats_df['release_year_temp'])]
                 power = (np.array(wciars).sum())
                 row = {'director': director, 'sum_power': revenue_sum, 'wciar_power': power}
                 director_df = director_df.append(row, ignore_index=True)
             return director_df
 
         def add_director_star_power(train_df: pd.DataFrame, director_df: pd.DataFrame):
-            def get_average_power(nconsts: list, df: pd.DataFrame):
-                total_s = 0
-                total_p = 0
-                n = 0
-                for nconst in nconsts:
-                    total_s = total_s + df.loc[df['director'] == nconst, 'sum_power'].to_numpy()[0]
-                    total_p = total_p + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
-                    n = n + 1
-                avg_s = total_s / n
-                avg_p = total_p / n
-                return [avg_s, avg_p]
-
-            train_df['director_power_s'] = train_df.apply(
-                lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1)
+            # train_df['director_power_s'] = train_df.apply(
+            #     lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1)
             train_df['director_power_p'] = train_df.apply(
                 lambda row: get_average_power(row['directors'].split(sep=','), director_df)[1], axis=1)
             train_df = train_df.drop(columns=['directors'])
             return train_df
 
-        minmax_scale_cols = ['release_year', 'opening_theaters', 'release_day', 'runtime_minutes']
+        data['release_year_temp'] = data['release_year']
+        minmax_scale_cols = ['release_year', 'opening_theaters', 'release_day', 'runtime_minutes', 'release_month']
         for col in minmax_scale_cols:
             try: data[col] = minmax_scale(data[col], feature_range=(0, 1))
             except KeyError: pass
@@ -124,18 +130,20 @@ if __name__ == '__main__':
         stats_sum = Counter()
         n = 0
         for train_indices, test_indices in split_indices:
-            train = data.iloc[train_indices]
-            director_df = get_director_df(train)
+            director_df = get_director_df(data.iloc[train_indices])
 
-            test = data.iloc[test_indices]
-
-            y_train = train['opening_revenue'].apply(lambda row: math.log(row))
-            y_test = test['opening_revenue'].apply(lambda row: math.log(row))
-
-            X_train = train.drop(columns=['opening_revenue', 'directors'])
-            X_test = test.drop(columns=['opening_revenue', 'directors'])
+            model_data = data.drop(columns=['release_year_temp'])
+            train = model_data.iloc[train_indices]
 
             X_train_power = add_director_star_power(train, director_df)
+            X_train_power.to_csv('X_train_power.csv')
+            X_train = X_train_power.drop(columns=['opening_revenue'])
+            y_train = train['opening_revenue'].apply(lambda row: math.log(row))
+
+            test = model_data.iloc[test_indices]
+            test_power = add_director_star_power(test, director_df).dropna()
+            X_test = test_power.drop(columns=['opening_revenue'])
+            y_test = test_power['opening_revenue'].apply(lambda row: math.log(row))
 
             model.fit(X_train, y_train)
             y_pred = model.predict(X_test)
