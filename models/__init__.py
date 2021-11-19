@@ -47,8 +47,9 @@ if __name__ == '__main__':
         df_raw = pickle.load(f)
 
     data = df.drop(columns=['tconst', 'domestic_revenue'])
-    # eigen(X)
 
+
+    # eigen(X)
 
     def print_metrics(stats: dict):
         print(f"Mean Squared Log Error={stats['Mean Squared Log Error']}")
@@ -77,7 +78,7 @@ if __name__ == '__main__':
             for nconst in nconsts:
                 if len(df.loc[df['director'] == nconst]) == 0:
                     # Todo HANDLE MISSING DIRECTOR
-                    return [None, None]
+                    return [0, 0]
                     pass
                 else:
                     total_s = total_s + df.loc[df['director'] == nconst, 'sum_power'].to_numpy()[0]
@@ -100,7 +101,8 @@ if __name__ == '__main__':
             for director in directors:
                 # Get all movies with director
                 director_stats_df = train_df.loc[
-                    train_df['directors'].str.contains(director), ['directors', 'opening_revenue_temp', 'release_year_temp']]
+                    train_df['directors'].str.contains(director), ['directors', 'opening_revenue_temp',
+                                                                   'release_year_temp']]
 
                 revenue_sum = math.log(director_stats_df['opening_revenue_temp'].sum())
 
@@ -113,12 +115,13 @@ if __name__ == '__main__':
             return director_df
 
         def add_director_star_power(train_df: pd.DataFrame, director_df: pd.DataFrame):
+            return_df = train_df.copy()
             # train_df['director_power_s'] = train_df.apply(
             #     lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1)
-            train_df['director_power_p'] = train_df.apply(
+            return_df['director_power_p'] = return_df.apply(
                 lambda row: get_average_power(row['directors'].split(sep=','), director_df)[1], axis=1)
-            train_df = train_df.drop(columns=['directors'])
-            return train_df
+            return_df = return_df.drop(columns=['directors'])
+            return return_df
 
         data['release_year_temp'] = data['release_year']
         data['opening_revenue_temp'] = data['opening_revenue']
@@ -132,17 +135,20 @@ if __name__ == '__main__':
             model_data = data.drop(columns=['release_year_temp', 'opening_revenue_temp'])
             train = model_data.iloc[train_indices]
 
-            X_train_power = add_director_star_power(train, director_df)
+            X_train_power = train.drop(columns=['directors'])
+            # X_train_power = add_director_star_power(train, director_df)
             X_train_power = X_train_power.drop(columns=['opening_revenue'])
 
             scaler = StandardScaler()
-            scale_cols = ['release_year', 'opening_theaters', 'runtime_minutes', 'budget', 'director_power_p']
+            scale_cols = ['release_year', 'opening_theaters', 'runtime_minutes']
             X_train_power[scale_cols] = scaler.fit_transform(X_train_power[scale_cols])
             y_train = train['opening_revenue'].apply(lambda row: math.log(row))
 
             test = model_data.iloc[test_indices]
-            test_power = add_director_star_power(test, director_df).dropna()
-            X_test[scale_cols] = scaler.transform(test_power.drop(columns=['opening_revenue']))
+            test_power = test.drop(columns=['directors'])
+            # test_power = add_director_star_power(test, director_df).dropna()
+            X_test = test_power.drop(columns=['opening_revenue'])
+            X_test[scale_cols] = scaler.transform(X_test[scale_cols])
             y_test = test_power['opening_revenue'].apply(lambda row: math.log(row))
 
             model.fit(X_train_power, y_train)
@@ -151,6 +157,7 @@ if __name__ == '__main__':
             n += 1
         stats = {k: v / n for k, v in stats_sum.items()}
         print_metrics(stats)
+
 
     # Base test
     regr = linear_model.LinearRegression()
@@ -162,41 +169,42 @@ if __name__ == '__main__':
     test_model(ridge, data)
     test_model(lasso, data)
 
-    print('Lin Reg No MPAA')
-    test_model(regr, data.drop(columns=['mpaa_g', 'mpaa_pg', 'mpaa_pg-13', 'mpaa_r', 'mpaa_nc-17', 'mpaa_unrated']))
+    feature_select = False
+    if feature_select:
+        print('Lin Reg No MPAA')
+        test_model(regr, data.drop(columns=['mpaa_g', 'mpaa_pg', 'mpaa_pg-13', 'mpaa_r', 'mpaa_nc-17', 'mpaa_unrated']))
 
-    print('Lin Reg No Genres')
-    genre_cols = [col_name for col_name in data if 'genre_' in col_name]
-    test_model(regr, data.drop(columns=genre_cols))
+        print('Lin Reg No Genres')
+        genre_cols = [col_name for col_name in data if 'genre_' in col_name]
+        test_model(regr, data.drop(columns=genre_cols))
 
-    print('Lin Reg No Distributors')
-    distributor_cols = [col_name for col_name in data if 'distributor_' in col_name]
-    test_model(regr, data.drop(columns=distributor_cols))
+        print('Lin Reg No Distributors')
+        distributor_cols = [col_name for col_name in data if 'distributor_' in col_name]
+        test_model(regr, data.drop(columns=distributor_cols))
 
-    print('Lin Reg No Opening Theatres')
-    test_model(regr, data.drop(columns=['opening_theaters']))
+        print('Lin Reg No Opening Theatres')
+        test_model(regr, data.drop(columns=['opening_theaters']))
 
-    print('Lin Reg No Runtime')
-    test_model(regr, data.drop(columns=['runtime_minutes']))
+        print('Lin Reg No Runtime')
+        test_model(regr, data.drop(columns=['runtime_minutes']))
 
-    print('Lin Reg No Release Day')
-    release_cols = [col_name for col_name in data if 'day_' in col_name]
-    test_model(regr, data.drop(columns=release_cols))
+        print('Lin Reg No Release Day')
+        release_cols = [col_name for col_name in data if 'day_' in col_name]
+        test_model(regr, data.drop(columns=release_cols))
 
-    print('Lin Reg No Release Month')
-    release_cols = [col_name for col_name in data if 'month_' in col_name]
-    test_model(regr, data.drop(columns=release_cols))
+        print('Lin Reg No Release Month')
+        release_cols = [col_name for col_name in data if 'month_' in col_name]
+        test_model(regr, data.drop(columns=release_cols))
 
-    print('Lin Reg No Release Year')
-    test_model(regr, data.drop(columns=['release_year']))
+        print('Lin Reg No Release Year')
+        test_model(regr, data.drop(columns=['release_year']))
 
     print('SVR')
-    params = [
-        {"kernel": ["rbf"], "gamma": np.logspace(-9, 9, 19), "C": np.logspace(-9, 9, 19), "epsilon": range(0.1, 2, .1)}]
+    params = [{"kernel": ["rbf"], "gamma": np.logspace(-9, 9, 19), "C": np.logspace(-9, 9, 19),
+               "epsilon": [0.1, 0.2, 0.5, 0.3]}]
 
     X = data.drop(columns=['opening_revenue'])
     y = data['opening_revenue']
     grid_reg = GridSearchCV(SVR(), params, n_jobs=-1, cv=TimeSeriesSplit(), verbose=2)
     grid_reg.fit(X, y)
     print(grid_reg.cv_results_)
-
