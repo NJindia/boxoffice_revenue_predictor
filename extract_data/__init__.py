@@ -175,6 +175,15 @@ if __name__ == '__main__':
     m_df = m_df.drop(columns=['release_day'])
     feature_df = pd.merge(feature_df, m_df, on='tconst')
 
+    # Get Release Month features
+    m_df = feature_df[['tconst', 'release_month']]
+    for i in range(1, 13):
+        col_name = 'month_' + str(i)
+        m_df[col_name] = 0
+        m_df.loc[m_df['release_month'] == i, col_name] = 1
+    m_df = m_df.drop(columns=['release_month'])
+    feature_df = pd.merge(feature_df, m_df, on='tconst').drop(columns='release_month')
+
     # Get MPAA features
     mpaa_ratings = pd.unique(movie_data['mpaa'])
     m_df = movie_data[['tconst', 'mpaa']]

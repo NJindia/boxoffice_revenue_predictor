@@ -4,14 +4,14 @@ import math
 import pickle
 from collections import Counter
 from os.path import dirname, abspath
-from warnings import simplefilter
 
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from sklearn import linear_model, metrics
-from sklearn.model_selection import TimeSeriesSplit
+from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 from sklearn.preprocessing import StandardScaler, minmax_scale
+from sklearn.svm import SVR
 
 if __name__ == '__main__':
     pd.options.mode.chained_assignment = None
@@ -100,13 +100,13 @@ if __name__ == '__main__':
             for director in directors:
                 # Get all movies with director
                 director_stats_df = train_df.loc[
-                    train_df['directors'].str.contains(director), ['directors', 'opening_revenue', 'release_year_temp']]
+                    train_df['directors'].str.contains(director), ['directors', 'opening_revenue_temp', 'release_year_temp']]
 
-                revenue_sum = director_stats_df['opening_revenue'].sum()
+                revenue_sum = math.log(director_stats_df['opening_revenue_temp'].sum())
 
                 curr_year = datetime.datetime.now().year
-                wciars = [math.sqrt(iar * math.pow(.8, curr_year - year)) for iar, year in
-                          zip(director_stats_df['opening_revenue'], director_stats_df['release_year_temp'])]
+                wciars = [math.log(iar * math.pow(.8, curr_year - year)) for iar, year in
+                          zip(director_stats_df['opening_revenue_temp'], director_stats_df['release_year_temp'])]
                 power = (np.array(wciars).sum())
                 row = {'director': director, 'sum_power': revenue_sum, 'wciar_power': power}
                 director_df = director_df.append(row, ignore_index=True)
@@ -121,10 +121,7 @@ if __name__ == '__main__':
             return train_df
 
         data['release_year_temp'] = data['release_year']
-        minmax_scale_cols = ['release_year', 'opening_theaters', 'release_day', 'runtime_minutes', 'release_month']
-        for col in minmax_scale_cols:
-            try: data[col] = minmax_scale(data[col], feature_range=(0, 1))
-            except KeyError: pass
+        data['opening_revenue_temp'] = data['opening_revenue']
 
         split_indices = TimeSeriesSplit().split(data)
         stats_sum = Counter()
@@ -132,20 +129,23 @@ if __name__ == '__main__':
         for train_indices, test_indices in split_indices:
             director_df = get_director_df(data.iloc[train_indices])
 
-            model_data = data.drop(columns=['release_year_temp'])
+            model_data = data.drop(columns=['release_year_temp', 'opening_revenue_temp'])
             train = model_data.iloc[train_indices]
 
             X_train_power = add_director_star_power(train, director_df)
-            X_train_power.to_csv('X_train_power.csv')
-            X_train = X_train_power.drop(columns=['opening_revenue'])
+            X_train_power = X_train_power.drop(columns=['opening_revenue'])
+
+            scaler = StandardScaler()
+            scale_cols = ['release_year', 'opening_theaters', 'runtime_minutes', 'budget', 'director_power_p']
+            X_train_power[scale_cols] = scaler.fit_transform(X_train_power[scale_cols])
             y_train = train['opening_revenue'].apply(lambda row: math.log(row))
 
             test = model_data.iloc[test_indices]
             test_power = add_director_star_power(test, director_df).dropna()
-            X_test = test_power.drop(columns=['opening_revenue'])
+            X_test[scale_cols] = scaler.transform(test_power.drop(columns=['opening_revenue']))
             y_test = test_power['opening_revenue'].apply(lambda row: math.log(row))
 
-            model.fit(X_train, y_train)
+            model.fit(X_train_power, y_train)
             y_pred = model.predict(X_test)
             stats_sum += Counter(get_metrics(y_test, y_pred))
             n += 1
@@ -156,7 +156,11 @@ if __name__ == '__main__':
     regr = linear_model.LinearRegression()
 
     print('Lin Reg Baseline')
+    ridge = linear_model.Ridge()
+    lasso = linear_model.Lasso()
     test_model(regr, data)
+    test_model(ridge, data)
+    test_model(lasso, data)
 
     print('Lin Reg No MPAA')
     test_model(regr, data.drop(columns=['mpaa_g', 'mpaa_pg', 'mpaa_pg-13', 'mpaa_r', 'mpaa_nc-17', 'mpaa_unrated']))
@@ -180,13 +184,19 @@ if __name__ == '__main__':
     test_model(regr, data.drop(columns=release_cols))
 
     print('Lin Reg No Release Month')
-    test_model(regr, data.drop(columns=['release_month']))
+    release_cols = [col_name for col_name in data if 'month_' in col_name]
+    test_model(regr, data.drop(columns=release_cols))
 
     print('Lin Reg No Release Year')
     test_model(regr, data.drop(columns=['release_year']))
 
-    # X_sum = X.drop(columns=['director_power_p'])  # X_power = X.drop(columns=['director_power_s'])  # test_model(regr, X_sum)  # test_model(regr, X_power)
+    print('SVR')
+    params = [
+        {"kernel": ["rbf"], "gamma": np.logspace(-9, 9, 19), "C": np.logspace(-9, 9, 19), "epsilon": range(0.1, 2, .1)}]
 
-    # params = [  #     {"kernel": ["rbf"], "gamma": np.logspace(-9, 9, 19), "C": np.logspace(-9, 9, 19), "epsilon": range(0.1, 2, .1)}  # ]
+    X = data.drop(columns=['opening_revenue'])
+    y = data['opening_revenue']
+    grid_reg = GridSearchCV(SVR(), params, n_jobs=-1, cv=TimeSeriesSplit(), verbose=2)
+    grid_reg.fit(X, y)
+    print(grid_reg.cv_results_)
 
-    # grid_reg = GridSearchCV(SVR(), params, n_jobs=-1, cv=cv)  # grid_reg.fit(X_train, y_train)  # print('SVR')  # test_model(svr, X_train, y_train, X_test, y_test)  # test_model(svr, X_sum)  # test_model(svr, X_power)  # ridge = linear_model.Ridge()  # test_model(ridge, X)  # lasso = linear_model.Lasso()  # test_model(lasso, X)
