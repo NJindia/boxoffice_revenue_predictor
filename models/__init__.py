@@ -9,15 +9,13 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 from sklearn import linear_model, metrics
-from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
-from sklearn.preprocessing import StandardScaler, minmax_scale
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVR
+from skopt import BayesSearchCV
 
 if __name__ == '__main__':
     pd.options.mode.chained_assignment = None
-
-    SPLIT_RATIO = .6
-
 
     # @X_train IS 2D
     def eigen(X_train):
@@ -47,46 +45,59 @@ if __name__ == '__main__':
         df_raw = pickle.load(f)
 
     data = df.drop(columns=['tconst', 'domestic_revenue'])
-
+    data['budget'] = data['budget'].apply(lambda row: math.log(row))
 
     # eigen(X)
 
+
     def print_metrics(stats: dict):
-        print(f"Mean Squared Log Error={stats['Mean Squared Log Error']}")
-        print(f"Root Mean Squared Log Error={stats['Root Mean Squared Log Error']}")
+        # print(f"Mean Squared Log Error={stats['Mean Squared Log Error']}")
+        # print(f"Root Mean Squared Log Error={stats['Root Mean Squared Log Error']}")
         print(f"Mean Squared Error={stats['Mean Squared Error']}")
-        print(f"Root Mean Squared Error={stats['Root Mean Squared Error']}")
+        # print(f"Root Mean Squared Error={stats['Root Mean Squared Error']}")
         print(f"R^2={stats['R^2']}")
 
 
     # FROM https://github.com/PermanAtayev/Movie-revenue-prediction/blob/master/movie_revenue_predict.ipynb
     def get_metrics(y_test, y_pred) -> dict:
-        msle = metrics.mean_squared_log_error(y_test, y_pred)
-        rmsle = np.sqrt(metrics.mean_squared_log_error(y_test, y_pred))
+        # msle = metrics.mean_squared_log_error(y_test, y_pred)
+        # rmsle = np.sqrt(msle)
         mse = metrics.mean_squared_error(y_test, y_pred)
-        rmse = np.sqrt(metrics.mean_squared_error(y_test, y_pred))
+        # rmse = np.sqrt(mse)
         r2 = metrics.r2_score(y_test, y_pred)
-        return {"Mean Squared Log Error": msle, "Root Mean Squared Log Error": rmsle, "Mean Squared Error": mse,
-                "Root Mean Squared Error": rmse, "R^2": r2}
+        return {
+            # "Mean Squared Log Error": msle,
+            # "Root Mean Squared Log Error": rmsle,
+            "Mean Squared Error": mse,
+            # "Root Mean Squared Error": rmse,
+            "R^2": r2}
 
 
     def test_model(model, data):
+        stats_sum = Counter()
+        n = 0
+        for X_train_power, y_train, X_test, y_test in forward_chaining_iterator(data):
+            model.fit(X_train_power, y_train)
+            y_pred = model.predict(X_test)
+            y_pred[y_pred<0] = 0
+            stats_sum.update(Counter(get_metrics(y_test, y_pred)))
+            n += 1
+        stats = {k: v / n for k, v in stats_sum.items()}
+        print_metrics(stats)
+
+
+    def forward_chaining_iterator(data):
         def get_average_power(nconsts: list, df: pd.DataFrame):
-            total_s = 0
-            total_p = 0
+            total = 0
             n = 0
             for nconst in nconsts:
                 if len(df.loc[df['director'] == nconst]) == 0:
                     # Todo HANDLE MISSING DIRECTOR
-                    return [0, 0]
-                    pass
-                else:
-                    total_s = total_s + df.loc[df['director'] == nconst, 'sum_power'].to_numpy()[0]
-                    total_p = total_p + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
+                    return 0
+                else: total = total + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
                 n = n + 1
-            avg_s = total_s / n
-            avg_p = total_p / n
-            return [avg_s, avg_p]
+            avg_p = total / n
+            return avg_p
 
         def get_director_df(train_df: pd.DataFrame):
             # Get list of director nconsts
@@ -116,53 +127,43 @@ if __name__ == '__main__':
 
         def add_director_star_power(train_df: pd.DataFrame, director_df: pd.DataFrame):
             return_df = train_df.copy()
-            # train_df['director_power_s'] = train_df.apply(
-            #     lambda x: get_average_power(x['directors'].split(sep=','), director_df)[0], axis=1)
             return_df['director_power_p'] = return_df.apply(
-                lambda row: get_average_power(row['directors'].split(sep=','), director_df)[1], axis=1)
+                lambda row: get_average_power(row['directors'].split(sep=','), director_df), axis=1)
             return_df = return_df.drop(columns=['directors'])
             return return_df
 
-        data['release_year_temp'] = data['release_year']
-        data['opening_revenue_temp'] = data['opening_revenue']
-
         split_indices = TimeSeriesSplit().split(data)
-        stats_sum = Counter()
-        n = 0
-        for train_indices, test_indices in split_indices:
-            director_df = get_director_df(data.iloc[train_indices])
 
-            model_data = data.drop(columns=['release_year_temp', 'opening_revenue_temp'])
-            train = model_data.iloc[train_indices]
+        temp_data = data.copy()
+        temp_data['release_year_temp'] = data['release_year']
+        temp_data['opening_revenue_temp'] = data['opening_revenue']
+        data['opening_revenue'] = data['opening_revenue'].apply(lambda row: math.log(row))
+        for train_indices, test_indices in split_indices:
+            director_df = get_director_df(temp_data.iloc[train_indices])
+            # actor_df = get_actor_df(temp_data.iloc[train_indices])
+            train = data.iloc[train_indices]
 
             X_train_power = train.drop(columns=['directors'])
             # X_train_power = add_director_star_power(train, director_df)
             X_train_power = X_train_power.drop(columns=['opening_revenue'])
 
             scaler = StandardScaler()
-            scale_cols = ['release_year', 'opening_theaters', 'runtime_minutes']
+            scale_cols = ['release_year', 'opening_theaters', 'runtime_minutes', 'budget']
             X_train_power[scale_cols] = scaler.fit_transform(X_train_power[scale_cols])
-            y_train = train['opening_revenue'].apply(lambda row: math.log(row))
+            y_train = train['opening_revenue']
 
-            test = model_data.iloc[test_indices]
+            test = data.iloc[test_indices]
             test_power = test.drop(columns=['directors'])
             # test_power = add_director_star_power(test, director_df).dropna()
             X_test = test_power.drop(columns=['opening_revenue'])
             X_test[scale_cols] = scaler.transform(X_test[scale_cols])
-            y_test = test_power['opening_revenue'].apply(lambda row: math.log(row))
-
-            model.fit(X_train_power, y_train)
-            y_pred = model.predict(X_test)
-            stats_sum += Counter(get_metrics(y_test, y_pred))
-            n += 1
-        stats = {k: v / n for k, v in stats_sum.items()}
-        print_metrics(stats)
+            y_test = test_power['opening_revenue']
+            yield X_train_power, y_train, X_test, y_test
 
 
     # Base test
-    regr = linear_model.LinearRegression()
-
     print('Lin Reg Baseline')
+    regr = linear_model.LinearRegression()
     ridge = linear_model.Ridge()
     lasso = linear_model.Lasso()
     test_model(regr, data)
@@ -199,12 +200,33 @@ if __name__ == '__main__':
         print('Lin Reg No Release Year')
         test_model(regr, data.drop(columns=['release_year']))
 
-    print('SVR')
-    params = [{"kernel": ["rbf"], "gamma": np.logspace(-9, 9, 19), "C": np.logspace(-9, 9, 19),
-               "epsilon": [0.1, 0.2, 0.5, 0.3]}]
+    params = {"epsilon": [0.1, 0.2, 0.5, 0.3]}
+    lin_params = {"C": np.logspace(-9, 9, 19), "epsilon": [0.1, 0.2, 0.5, 0.3]}
+    poly_grid = {"degree": [2, 3, 4, 5, 6], "gamma": np.logspace(-9, 9, 19), "C": np.logspace(-9, 9, 19),
+                 "epsilon": [0.1, 0.2, 0.5, 0.3]}
 
-    X = data.drop(columns=['opening_revenue'])
-    y = data['opening_revenue']
-    grid_reg = GridSearchCV(SVR(), params, n_jobs=-1, cv=TimeSeriesSplit(), verbose=2)
-    grid_reg.fit(X, y)
-    print(grid_reg.cv_results_)
+    X = data.drop(columns=['opening_revenue', 'directors'])
+    # X['budget'] = X['budget'].apply(lambda row: math.log(row))
+    y = data['opening_revenue'].apply(lambda row: math.log(row))
+    scaler = StandardScaler()
+    scale_cols = ['release_year', 'opening_theaters', 'runtime_minutes', 'budget']
+    X[scale_cols] = scaler.fit_transform(X[scale_cols])
+    print('SVR')
+    opt = BayesSearchCV(SVR(),
+                        {'C': np.logspace(-6, 6, 13), 'gamma': np.logspace(-6, 2, 9), 'epsilon': [.1, .2, .3, .4, .5],
+                         'kernel': ['rbf', 'sigmoid']}, n_jobs=-1, cv=TimeSeriesSplit(), verbose=3, scoring="r2")
+    opt.fit(X, y)
+    print(opt.best_params_)
+    print(opt.best_score_)
+
+    svr = SVR(kernel="", C=0, epsilon=0, gamma=0)
+    test_model()
+
+    # print('SVR2')
+    # lin_grid_reg = BayesSearchCV(LinearSVR(), {'C': np.logspace(-6, 6, 13), 'epsilon': [.1, .2, .3, .4, .5]},
+    #                              n_jobs=-1, cv=TimeSeriesSplit(), verbose=3, scoring="r2")
+    # lin_grid_reg.fit(X, y)
+    # print(lin_grid_reg.best_params_)
+    # print(lin_grid_reg.best_score_)
+
+    print('|')

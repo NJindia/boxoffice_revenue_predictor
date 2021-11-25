@@ -71,9 +71,8 @@ if __name__ == '__main__':
             # imdb_data = imdb_data_untrimmed.apply(lambda row: row if np.all(np.in1d(row['nconst'].split(sep=','),dead, invert=True)) else np.nan, axis=1).dropna()
 
             with open('pickled_data/imdb_movie_data.pickle', 'wb') as f:
-                pickle.dump(imdb_data, f)
-            # ratings_data = pd.merge(imdb_data, ratings_df, on='tconst')
-            # ratings_data.to_csv("ratings.csv", encoding='utf-8-sig')
+                pickle.dump(imdb_data,
+                            f)  # ratings_data = pd.merge(imdb_data, ratings_df, on='tconst')  # ratings_data.to_csv("ratings.csv", encoding='utf-8-sig')
         else:
             with open('pickled_data/imdb_movie_data.pickle', 'rb') as f:
                 imdb_data = pickle.load(f)
@@ -95,10 +94,8 @@ if __name__ == '__main__':
         if scrape_mpaa or scrape_boxofficemojo:
             crawl(process)
             reactor.run()
-        with open('pickled_data/box_office_data.pickle', 'rb') as f:
-            box_office_data_raw = pickle.load(f)
-        with open('pickled_data/mpaa_data.pickle', 'rb') as f:
-            mpaa_data = pickle.load(f)
+        with open('pickled_data/box_office_data.pickle', 'rb') as f: box_office_data_raw = pickle.load(f)
+        with open('pickled_data/mpaa_data.pickle', 'rb') as f: mpaa_data = pickle.load(f)
         box_office_data = pd.merge(box_office_data_raw, mpaa_data, how='left', on='tconst', suffixes=('_l', '_r'))
         box_office_data.loc[box_office_data['mpaa_l'] == '\\N', 'mpaa_l'] = box_office_data.loc[
             box_office_data['mpaa_l'] == '\\N', 'mpaa_r']
@@ -106,11 +103,9 @@ if __name__ == '__main__':
         movie_data = pd.merge(imdb_data, box_office_data, how="right", on="tconst")
         movie_data = movie_data.drop(columns=['primaryTitle', 'mpaa_r'])
         movie_data.to_csv("movie_data.csv", encoding='utf-8-sig')
-        with open('pickled_data/movie_data.pickle', 'wb') as f:
-            pickle.dump(movie_data, f)
+        with open('pickled_data/movie_data.pickle', 'wb') as f: pickle.dump(movie_data, f)
 
-    with open('pickled_data/movie_data.pickle', 'rb') as f:
-        movie_data = pickle.load(f)
+    with open('pickled_data/movie_data.pickle', 'rb') as f: movie_data = pickle.load(f)
 
     # Get features
     feature_df = pd.DataFrame(data=movie_data[['tconst', 'directors']], columns=['tconst', 'directors'])
