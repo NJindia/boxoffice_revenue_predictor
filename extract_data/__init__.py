@@ -108,7 +108,8 @@ if __name__ == '__main__':
     with open('pickled_data/movie_data.pickle', 'rb') as f: movie_data = pickle.load(f)
 
     # Get features
-    feature_df = pd.DataFrame(data=movie_data[['tconst', 'directors']], columns=['tconst', 'directors'])
+    feature_df = pd.DataFrame(data=movie_data[['tconst', 'directors', 'distributor', 'mpaa']],
+                              columns=['tconst', 'directors', 'distributor','mpaa'])
     feature_df['release_year'] = pd.to_numeric(movie_data['startYear'])
     feature_df['budget'] = pd.to_numeric(movie_data['budget'].str.replace(r'\D+', '', regex=True))
     feature_df['opening_revenue'] = pd.to_numeric(movie_data['opening_revenue'].str.replace(r'\D+', '', regex=True))
@@ -119,6 +120,7 @@ if __name__ == '__main__':
     # Convert release_date to release month and sort by release date
     feature_df['release_month'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).month)
     feature_df['release_date'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x))
+    feature_df['release_day'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).weekday())
     feature_df = feature_df.sort_values(by='release_date', axis=0, ascending=True).drop(columns=['release_date'])
 
     # Adjust monetary fields for inflation using CPI
@@ -135,16 +137,16 @@ if __name__ == '__main__':
         lambda row: adjust_for_inflation(cpi_df, row['opening_revenue'], row['release_month'], row['release_year'],
                                          cpi_target_month, cpi_target_year), axis=1)
 
-    # Get distributor features
-    distributors = pd.unique(movie_data['distributor'])
-    d_df = movie_data[['tconst', 'distributor']]
-    for distributor in distributors:
-        col_name = ('distributor_' + '_'.join(distributor.split(' '))).lower()
-        d_df[col_name] = 0
-        d_df.loc[d_df['distributor'] == distributor, col_name] = 1
-    d_df = d_df.drop(columns=['distributor'])
-    feature_df = pd.merge(feature_df, d_df, on='tconst')
-
+    # # Get distributor features
+    # distributors = pd.unique(movie_data['distributor'])
+    # d_df = movie_data[['tconst', 'distributor']]
+    # for distributor in distributors:
+    #     col_name = ('distributor_' + '_'.join(distributor.split(' '))).lower()
+    #     d_df[col_name] = 0
+    #     d_df.loc[d_df['distributor'] == distributor, col_name] = 1
+    # d_df = d_df.drop(columns=['distributor'])
+    # feature_df = pd.merge(feature_df, d_df, on='tconst')
+    #
     # Get genre features
     genres = np.array([], dtype=str)
     for entry in movie_data['genres']:
@@ -160,35 +162,35 @@ if __name__ == '__main__':
     g_df = g_df.drop(columns=['genres'])
     feature_df = pd.merge(feature_df, g_df, on='tconst')
 
-    # Get Release Day features
-    movie_data['release_day'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).weekday())
-    m_df = movie_data[['tconst', 'release_day']]
-    for i in range(7):
-        col_name = 'day_' + str(i)
-        m_df[col_name] = 0
-        m_df.loc[m_df['release_day'] == i, col_name] = 1
-    m_df = m_df.drop(columns=['release_day'])
-    feature_df = pd.merge(feature_df, m_df, on='tconst')
+    # # Get Release Day features
+    # movie_data['release_day'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).weekday())
+    # m_df = movie_data[['tconst', 'release_day']]
+    # for i in range(7):
+    #     col_name = 'day_' + str(i)
+    #     m_df[col_name] = 0
+    #     m_df.loc[m_df['release_day'] == i, col_name] = 1
+    # m_df = m_df.drop(columns=['release_day'])
+    # feature_df = pd.merge(feature_df, m_df, on='tconst')
 
-    # Get Release Month features
-    m_df = feature_df[['tconst', 'release_month']]
-    for i in range(1, 13):
-        col_name = 'month_' + str(i)
-        m_df[col_name] = 0
-        m_df.loc[m_df['release_month'] == i, col_name] = 1
-    m_df = m_df.drop(columns=['release_month'])
-    feature_df = pd.merge(feature_df, m_df, on='tconst').drop(columns='release_month')
-
-    # Get MPAA features
-    mpaa_ratings = pd.unique(movie_data['mpaa'])
-    m_df = movie_data[['tconst', 'mpaa']]
-    for rating in mpaa_ratings:
-        col_name = 'mpaa_' + rating.lower()
-        m_df[col_name] = 0
-        m_df.loc[m_df['mpaa'] == rating, col_name] = 1
-    m_df = m_df.drop(columns=['mpaa'])
-    feature_df = pd.merge(feature_df, m_df, on='tconst')
-
+    # # Get Release Month features
+    # m_df = feature_df[['tconst', 'release_month']]
+    # for i in range(1, 13):
+    #     col_name = 'month_' + str(i)
+    #     m_df[col_name] = 0
+    #     m_df.loc[m_df['release_month'] == i, col_name] = 1
+    # m_df = m_df.drop(columns=['release_month'])
+    # feature_df = pd.merge(feature_df, m_df, on='tconst').drop(columns='release_month')
+    #
+    # # Get MPAA features
+    # mpaa_ratings = pd.unique(movie_data['mpaa'])
+    # m_df = movie_data[['tconst', 'mpaa']]
+    # for rating in mpaa_ratings:
+    #     col_name = 'mpaa_' + rating.lower()
+    #     m_df[col_name] = 0
+    #     m_df.loc[m_df['mpaa'] == rating, col_name] = 1
+    # m_df = m_df.drop(columns=['mpaa'])
+    # feature_df = pd.merge(feature_df, m_df, on='tconst')
+    #
     feature_df.to_csv('features.csv')
     with open('./pickled_data/features.pickle', 'wb') as f:
         pickle.dump(feature_df, f)
