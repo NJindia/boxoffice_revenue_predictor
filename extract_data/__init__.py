@@ -108,8 +108,8 @@ if __name__ == '__main__':
     with open('pickled_data/movie_data.pickle', 'rb') as f: movie_data = pickle.load(f)
 
     # Get features
-    feature_df = pd.DataFrame(data=movie_data[['tconst', 'directors', 'distributor', 'mpaa']],
-                              columns=['tconst', 'directors', 'distributor','mpaa'])
+    feature_df = pd.DataFrame(data=movie_data[['tconst', 'directors', 'actors', 'distributor', 'mpaa']],
+                              columns=['tconst', 'directors', 'actors', 'distributor', 'mpaa'])
     feature_df['release_year'] = pd.to_numeric(movie_data['startYear'])
     feature_df['budget'] = pd.to_numeric(movie_data['budget'].str.replace(r'\D+', '', regex=True))
     feature_df['opening_revenue'] = pd.to_numeric(movie_data['opening_revenue'].str.replace(r'\D+', '', regex=True))

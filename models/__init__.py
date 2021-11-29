@@ -14,65 +14,89 @@ from sklearn.compose import make_column_transformer
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.svm import SVR
+from sklearn.svm import SVR, LinearSVR
 from skopt import BayesSearchCV
+
+
+class LogTransform(BaseEstimator, TransformerMixin):
+    def fit(self, X, y):
+        return self
+
+    def transform(self, X):
+        X[['budget', 'director_power', 'actor_power']] = X[
+            ['budget', 'director_power', 'actor_power']].apply(np.log)
+        return X
+
+
+class Debug(BaseEstimator, TransformerMixin):
+    def transform(self, X):
+        print(X)
+        return X
+
+    def fit(self, X, y=None, **fit_params):
+        return self
 
 
 # DO BEFORE SCALING
 class StarPower(BaseEstimator, TransformerMixin):
-    def _get_average_power(self, nconsts: list, df: pd.DataFrame):
+    def _get_average_power(self, nconsts: list, star_df: pd.DataFrame):
         total = 0
         n = 0
         for nconst in nconsts:
-            if len(df.loc[df['director'] == nconst]) == 0:
-                # Todo HANDLE MISSING DIRECTOR
-                return 0
-            else: total = total + df.loc[df['director'] == nconst, 'wciar_power'].to_numpy()[0]
+            if len(star_df.loc[star_df['star'] == nconst]) == 0:
+                # Todo HANDLE MISSING STAR
+                return star_df['wciar_power'].mean()
+            else: total = total + star_df.loc[star_df['star'] == nconst, 'wciar_power'].to_numpy()[0]
             n = n + 1
         avg_p = total / n
         return avg_p
 
-    def _get_director_df(self, X: pd.DataFrame):
-        # Get list of director nconsts
-        directors_arr_raw = np.unique(X['directors'].to_numpy(dtype=str))
-        directors_lists = np.char.split(directors_arr_raw, sep=',')
-        directors = []
-        for director_list in directors_lists:
-            for name in director_list:
-                if name not in directors:
-                    directors.append(name)
-        director_df = pd.DataFrame(columns=['director', 'sum_power', 'wciar_power'])
-        for director in directors:
-            # Get all movies with director
-            director_stats_df = X.loc[
-                X['directors'].str.contains(director), ['directors', 'domestic_revenue', 'release_year']]
+    def _get_star_df(self, X: pd.DataFrame, star_type: str):
+        if star_type not in ['actors', 'directors']: raise KeyError('Invalid Star Type')
+        # Get list of star nconsts
+        star_arr_raw = np.unique(X[star_type].to_numpy(dtype=str))
+        star_lists = np.char.split(star_arr_raw, sep=',')
+        stars = []
+        for star_list in star_lists:
+            for name in star_list:
+                if name not in stars:
+                    stars.append(name)
+        star_df = pd.DataFrame(columns=['star', 'sum_power', 'wciar_power'])
+        for star in stars:
+            # Get all movies with star
+            star_stats_df = X.loc[X[star_type].str.contains(star), [star_type, 'domestic_revenue', 'release_year']]
 
-            revenue_sum = math.log(director_stats_df['domestic_revenue'].sum())
+            revenue_sum = math.log(star_stats_df['domestic_revenue'].sum())
 
             curr_year = datetime.datetime.now().year
             wciars = [math.log(iar * math.pow(.8, curr_year - year)) for iar, year in
-                      zip(director_stats_df['domestic_revenue'], director_stats_df['release_year'])]
+                      zip(star_stats_df['domestic_revenue'], star_stats_df['release_year'])]
             power = (np.array(wciars).sum())
-            row = {'director': director, 'sum_power': revenue_sum, 'wciar_power': power}
-            director_df = director_df.append(row, ignore_index=True)
-        return director_df
+            row = {'star': star, 'sum_power': revenue_sum, 'wciar_power': power}
+            star_df = star_df.append(row, ignore_index=True)
+        return star_df
 
-    def _add_director_star_power(self, train_df: pd.DataFrame, director_df: pd.DataFrame):
+    def _add_star_powers(self, train_df: pd.DataFrame, director_df: pd.DataFrame, actor_df: pd.DataFrame):
         return_df = train_df.copy()
-        return_df['director_power_p'] = return_df.apply(
+        return_df['director_power'] = return_df.apply(
             lambda row: self._get_average_power(row['directors'].split(sep=','), director_df), axis=1)
         return_df = return_df.drop(columns=['directors'])
+        return_df['actor_power'] = return_df.apply(
+            lambda row: self._get_average_power(row['actors'].split(sep=','), actor_df), axis=1)
+        return_df = return_df.drop(columns=['actors'])
         return return_df
 
     def __init__(self):
         self.director_df = None
+        self.actor_df = None
 
     def fit(self, X, y):
-        self.director_df = self._get_director_df(X)
+        self.director_df = self._get_star_df(X, 'directors')
+        self.actor_df = self._get_star_df(X, 'actors')
         return self
 
     def transform(self, X):
-        X_train_power = self._add_director_star_power(X, self.director_df).dropna()
+        X_train_power = self._add_star_powers(X, self.director_df, self.actor_df)
         return X_train_power.drop(columns=['domestic_revenue'])
 
 
@@ -108,15 +132,15 @@ if __name__ == '__main__':
         df_raw = pickle.load(f)
 
     data = df.drop(columns=['tconst'])
-    data['budget'] = data['budget'].apply(lambda row: math.log(row))
-    data['opening_revenue'] = data['opening_revenue'].apply(lambda row: math.log(row))
 
     X = data.drop(columns=['opening_revenue'])
     y = data['opening_revenue']
+    y = y.apply(np.log)
 
     categorical_cols = ['distributor', 'release_day', 'release_month', 'mpaa']
-    numerical_cols = ['release_year', 'opening_theaters', 'runtime_minutes', 'budget']
-    ct = make_column_transformer((StandardScaler(), numerical_cols), (OneHotEncoder(handle_unknown='ignore'), categorical_cols))
+    numerical_cols = ['release_year', 'opening_theaters', 'runtime_minutes', 'budget', 'director_power', 'actor_power']
+    ct = make_column_transformer((StandardScaler(), numerical_cols),
+                                 (OneHotEncoder(handle_unknown='ignore'), categorical_cols))
 
 
     # eigen(X)
@@ -143,7 +167,7 @@ if __name__ == '__main__':
 
 
     def test_model(model, X, y):
-        pipeline = make_pipeline(StarPower(), ct, model)
+        pipeline = make_pipeline(StarPower(), LogTransform(), ct, model)
         n = 0
         stats_sum = Counter()
         for train_indices, test_indices in TimeSeriesSplit().split(X):
@@ -202,21 +226,21 @@ if __name__ == '__main__':
                  "epsilon": [0.1, 0.2, 0.5, 0.3]}
 
     print('SVR')
-    opt = BayesSearchCV(SVR(),
-                        {'C': np.logspace(-6, 6, 13), 'gamma': np.logspace(-6, 2, 9), 'epsilon': [.1, .2, .3, .4, .5],
-                         'kernel': ['rbf', 'sigmoid']}, n_jobs=-1, cv=TimeSeriesSplit(), verbose=3, scoring="r2")
+    pipeline = make_pipeline(StarPower(), LogTransform(), ct, SVR())
+    opt = BayesSearchCV(pipeline, {'svr__C': np.logspace(-6, 6, 13), 'svr__gamma': np.logspace(-6, 2, 9),
+                                   'svr__epsilon': [.1, .2, .3, .4, .5], 'svr__kernel': ['rbf', 'sigmoid']}, n_jobs=-1,
+                        cv=TimeSeriesSplit(), verbose=3, scoring="r2")
     opt.fit(X, y)
     print(opt.best_params_)
     print(opt.best_score_)
 
-    svr = SVR(kernel="", C=0, epsilon=0, gamma=0)
-    test_model()
-
-    # print('SVR2')
-    # lin_grid_reg = BayesSearchCV(LinearSVR(), {'C': np.logspace(-6, 6, 13), 'epsilon': [.1, .2, .3, .4, .5]},
-    #                              n_jobs=-1, cv=TimeSeriesSplit(), verbose=3, scoring="r2")
-    # lin_grid_reg.fit(X, y)
-    # print(lin_grid_reg.best_params_)
-    # print(lin_grid_reg.best_score_)
+    print('SVR2')
+    pipeline = make_pipeline(StarPower(), LogTransform(), ct, LinearSVR())
+    lin_grid_reg = BayesSearchCV(pipeline,
+                                 {'linearsvr__C': np.logspace(-6, 6, 13), 'linearsvr__epsilon': [.1, .2, .3, .4, .5]},
+                                 n_jobs=-1, cv=TimeSeriesSplit(), verbose=3, scoring="r2")
+    lin_grid_reg.fit(X, y)
+    print(lin_grid_reg.best_params_)
+    print(lin_grid_reg.best_score_)
 
     print('|')
