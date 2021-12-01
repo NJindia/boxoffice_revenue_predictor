@@ -162,35 +162,6 @@ if __name__ == '__main__':
     g_df = g_df.drop(columns=['genres'])
     feature_df = pd.merge(feature_df, g_df, on='tconst')
 
-    # # Get Release Day features
-    # movie_data['release_day'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).weekday())
-    # m_df = movie_data[['tconst', 'release_day']]
-    # for i in range(7):
-    #     col_name = 'day_' + str(i)
-    #     m_df[col_name] = 0
-    #     m_df.loc[m_df['release_day'] == i, col_name] = 1
-    # m_df = m_df.drop(columns=['release_day'])
-    # feature_df = pd.merge(feature_df, m_df, on='tconst')
-
-    # # Get Release Month features
-    # m_df = feature_df[['tconst', 'release_month']]
-    # for i in range(1, 13):
-    #     col_name = 'month_' + str(i)
-    #     m_df[col_name] = 0
-    #     m_df.loc[m_df['release_month'] == i, col_name] = 1
-    # m_df = m_df.drop(columns=['release_month'])
-    # feature_df = pd.merge(feature_df, m_df, on='tconst').drop(columns='release_month')
-    #
-    # # Get MPAA features
-    # mpaa_ratings = pd.unique(movie_data['mpaa'])
-    # m_df = movie_data[['tconst', 'mpaa']]
-    # for rating in mpaa_ratings:
-    #     col_name = 'mpaa_' + rating.lower()
-    #     m_df[col_name] = 0
-    #     m_df.loc[m_df['mpaa'] == rating, col_name] = 1
-    # m_df = m_df.drop(columns=['mpaa'])
-    # feature_df = pd.merge(feature_df, m_df, on='tconst')
-    #
     feature_df.to_csv('features.csv')
     with open('./pickled_data/features.pickle', 'wb') as f:
         pickle.dump(feature_df, f)
