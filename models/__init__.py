@@ -1,7 +1,8 @@
 #!/usr/bin/env python
-import datetime
+import math
 import pickle
 from collections import Counter
+from datetime import datetime
 from os.path import dirname, abspath
 from warnings import simplefilter
 
@@ -52,16 +53,15 @@ class StarPower(BaseEstimator, TransformerMixin):
         n = 0
         for nconst in nconsts:
             powers = star_df.loc[star_df['star'] == nconst]
-            if len(powers) == 0:
-                return star_df['power'].mean()
-                # return 0
-            else:
-                if powers['year'].max() < year: tyear = powers['year'].max()
-                else: tyear = year
-                total = total + powers.loc[star_df['year'] == tyear, 'power'].to_numpy()[0]
-            n = n + 1
-        avg_p = total / n
-        return avg_p
+            valid = powers.loc[powers['year'] < year]
+            if len(valid) != 0:
+                wciars = [math.log(iar * math.pow(.8, year - m_year)) for iar, m_year in zip(valid['revenue'], valid['year'])]
+                power = (np.array(wciars).sum())
+                # power = valid['revenue'].sum()
+                total += power
+                n = n + 1
+        if n: return total / n
+        else: return None
 
     def _get_star_df(self, X: pd.DataFrame, star_type: str):
         if star_type not in ['actors', 'directors']: raise KeyError('Invalid Star Type')
@@ -79,29 +79,18 @@ class StarPower(BaseEstimator, TransformerMixin):
             star_stats_df = X.loc[
                 X[star_type].str.contains(star), ['domestic_revenue', 'release_year']].sort_values(
                 'release_year')
-
-            dft = star_stats_df[['domestic_revenue', 'release_year']]
-            dft['domestic_revenue'] = dft.apply(
-                lambda row: dft.loc[dft['release_year'] <= row['release_year'], ['domestic_revenue']].sum(),
-                axis=1)
-            rows = [{'star': star, 'power': power, 'year': year} for power, year in
-                    zip(dft['domestic_revenue'], dft['release_year'])]
-            # curr_year = datetime.datetime.now().year
-            # wciars = [math.log(iar * math.pow(.8, curr_year - year)) for iar, year in
-            #           zip(star_stats_df['domestic_revenue'], star_stats_df['release_year'])]
-            # power = (np.array(wciars).sum())
-            # row = {'star': star, 'power': power}
-            # rows = [{'star': star, 'revenue': revenue, 'year': year} for revenue, year in
-            #         zip(X['domestic_revenue'], X['release_year'])]
+            rows = [{'star': star, 'revenue': revenue, 'year': year} for revenue, year in
+                    zip(star_stats_df['domestic_revenue'], star_stats_df['release_year'])]
             star_df = star_df.append(rows, ignore_index=True)
         return star_df
 
     def _add_star_powers(self, train_df: pd.DataFrame, director_df: pd.DataFrame, actor_df: pd.DataFrame):
         return_df = train_df.copy()
         return_df['director_power'] = return_df.apply(
-            lambda row: self._get_average_power(row['directors'].split(sep=','), director_df, row['release_year']), axis=1)
-        return_df['actor_power'] = return_df.apply(
-            lambda row: self._get_average_power(row['actors'].split(sep=','), actor_df, row['release_year']), axis=1)
+            lambda row: self._get_average_power(row['directors'].split(sep=','), director_df, row['release_year']),
+            axis=1)
+        # return_df['actor_power'] = return_df.apply(
+        #     lambda row: self._get_average_power(row['actors'].split(sep=','), actor_df, row['release_year']), axis=1)
         return_df = return_df.drop(columns=['directors'])
         return_df = return_df.drop(columns=['actors'])
         return return_df
@@ -112,13 +101,14 @@ class StarPower(BaseEstimator, TransformerMixin):
 
     def fit(self, X, y=None):
         self.director_df = self._get_star_df(X, 'directors')
-        self.actor_df = self._get_star_df(X, 'actors')
+        # self.actor_df = self._get_star_df(X, 'actors')
         return self
 
     def transform(self, X):
         X_train_power = self._add_star_powers(X, self.director_df, self.actor_df)
+        # X_train_power['actor_power'] = X_train_power['actor_power'].fillna(X_train_power['actor_power'].mean())
+        X_train_power['director_power'] = X_train_power['director_power'].fillna(X_train_power['director_power'].mean())
         return X_train_power.drop(columns=['domestic_revenue'])
-
 
 if __name__ == '__main__':
     pd.options.mode.chained_assignment = None
@@ -150,7 +140,7 @@ if __name__ == '__main__':
         'budget',
         'runtime_minutes',
         'director_power',
-        'actor_power' # CONFIRMED TO BE MALADAPTIVE
+        # 'actor_power'  # CONFIRMED TO BE MALADAPTIVE
     ]
     genre_cols = [col_name for col_name in X if 'genre_' in col_name]
     ct = make_column_transformer(
@@ -219,7 +209,7 @@ if __name__ == '__main__':
     # print(lasso_grid.best_score_)
 
     print('SVR')
-    # test_model(SVR(C=100.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y) # FINAL
+    test_model(SVR(C=100.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y) # FINAL
     test_model(SVR(C=10.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y)  # BASELINE
     pipeline = get_pipeline(SVR())
     pg = {'svr__C': np.logspace(-4, 4, 9), 'svr__gamma': np.logspace(-4, 2, 7),
