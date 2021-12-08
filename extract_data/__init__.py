@@ -110,7 +110,6 @@ if __name__ == '__main__':
     # Get features
     feature_df = pd.DataFrame(data=movie_data[['tconst', 'directors', 'actors', 'distributor', 'mpaa']],
                               columns=['tconst', 'directors', 'actors', 'distributor', 'mpaa'])
-    feature_df['release_year'] = pd.to_numeric(movie_data['startYear'])
     feature_df['budget'] = pd.to_numeric(movie_data['budget'].str.replace(r'\D+', '', regex=True))
     feature_df['opening_revenue'] = pd.to_numeric(movie_data['opening_revenue'].str.replace(r'\D+', '', regex=True))
     feature_df['domestic_revenue'] = pd.to_numeric(movie_data['domestic_revenue'].str.replace(r'\D+', '', regex=True))
@@ -118,10 +117,12 @@ if __name__ == '__main__':
     feature_df['runtime_minutes'] = pd.to_numeric(movie_data['runtimeMinutes'].str.replace(r'\D+', '', regex=True))
 
     # Convert release_date to release month and sort by release date
+    feature_df['release_year'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).year)
     feature_df['release_month'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).month)
     feature_df['release_date'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x))
     feature_df['release_day'] = movie_data['release_date'].apply(lambda x: dateparser.parse(x).weekday())
-    feature_df = feature_df.sort_values(by='release_date', axis=0, ascending=True).drop(columns=['release_date'])
+
+    feature_df = feature_df.sort_values(by='release_date', axis=0, ascending=True)
 
     # Adjust monetary fields for inflation using CPI
     cpi_target_month = 1

@@ -1,16 +1,16 @@
 #!/usr/bin/env python
 import datetime
-import math
 import pickle
 from collections import Counter
 from os.path import dirname, abspath
+from warnings import simplefilter
 
 import numpy as np
 import pandas as pd
-from sklearn import linear_model, metrics
+from sklearn import metrics
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import make_column_transformer
-from sklearn.linear_model import LinearRegression, Ridge, Lasso
+from sklearn.linear_model import Ridge, Lasso, LinearRegression
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
@@ -31,7 +31,6 @@ class FeatureRemove(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X):
-        # X = X.drop(columns=[col_name for col_name in X if 'genre_' in col_name])
         X = X.drop(columns=[
             # 'mpaa'
             # 'distributor'
@@ -47,13 +46,19 @@ class FeatureRemove(BaseEstimator, TransformerMixin):
 
 # DO BEFORE SCALING
 class StarPower(BaseEstimator, TransformerMixin):
-    def _get_average_power(self, nconsts: list, star_df: pd.DataFrame):
+    def _get_average_power(self, nconsts: list, star_df: pd.DataFrame, year):
+        # TODO ONLY GET FOR PREVIOUS YEARS WORK PER TITLE
         total = 0
         n = 0
         for nconst in nconsts:
-            if len(star_df.loc[star_df['star'] == nconst]) == 0:
-                return star_df['wciar_power'].mean()
-            else: total = total + star_df.loc[star_df['star'] == nconst, 'wciar_power'].to_numpy()[0]
+            powers = star_df.loc[star_df['star'] == nconst]
+            if len(powers) == 0:
+                return star_df['power'].mean()
+                # return 0
+            else:
+                if powers['year'].max() < year: tyear = powers['year'].max()
+                else: tyear = year
+                total = total + powers.loc[star_df['year'] == tyear, 'power'].to_numpy()[0]
             n = n + 1
         avg_p = total / n
         return avg_p
@@ -68,26 +73,35 @@ class StarPower(BaseEstimator, TransformerMixin):
             for name in star_list:
                 if name not in stars:
                     stars.append(name)
-        star_df = pd.DataFrame(columns=['star', 'wciar_power'])
+        star_df = pd.DataFrame(columns=['star', 'power', 'year'])
         for star in stars:
             # Get all movies with star
-            star_stats_df = X.loc[X[star_type].str.contains(star), [star_type, 'domestic_revenue', 'release_year']]
+            star_stats_df = X.loc[
+                X[star_type].str.contains(star), ['domestic_revenue', 'release_year']].sort_values(
+                'release_year')
 
-            curr_year = datetime.datetime.now().year
-            wciars = [math.log(iar * math.pow(.8, curr_year - year)) for iar, year in
-                      zip(star_stats_df['domestic_revenue'], star_stats_df['release_year'])]
-            power = (np.array(wciars).sum())
-            row = {'star': star, 'wciar_power': power}
-            star_df = star_df.append(row, ignore_index=True)
+            dft = star_stats_df[['domestic_revenue', 'release_year']]
+            dft['domestic_revenue'] = dft.apply(
+                lambda row: dft.loc[dft['release_year'] <= row['release_year'], ['domestic_revenue']].sum(),
+                axis=1)
+            rows = [{'star': star, 'power': power, 'year': year} for power, year in
+                    zip(dft['domestic_revenue'], dft['release_year'])]
+            # curr_year = datetime.datetime.now().year
+            # wciars = [math.log(iar * math.pow(.8, curr_year - year)) for iar, year in
+            #           zip(star_stats_df['domestic_revenue'], star_stats_df['release_year'])]
+            # power = (np.array(wciars).sum())
+            # row = {'star': star, 'power': power}
+            # rows = [{'star': star, 'revenue': revenue, 'year': year} for revenue, year in
+            #         zip(X['domestic_revenue'], X['release_year'])]
+            star_df = star_df.append(rows, ignore_index=True)
         return star_df
 
     def _add_star_powers(self, train_df: pd.DataFrame, director_df: pd.DataFrame, actor_df: pd.DataFrame):
         return_df = train_df.copy()
         return_df['director_power'] = return_df.apply(
-            lambda row: self._get_average_power(row['directors'].split(sep=','), director_df), axis=1)
-
+            lambda row: self._get_average_power(row['directors'].split(sep=','), director_df, row['release_year']), axis=1)
         return_df['actor_power'] = return_df.apply(
-            lambda row: self._get_average_power(row['actors'].split(sep=','), actor_df), axis=1)
+            lambda row: self._get_average_power(row['actors'].split(sep=','), actor_df, row['release_year']), axis=1)
         return_df = return_df.drop(columns=['directors'])
         return_df = return_df.drop(columns=['actors'])
         return return_df
@@ -96,7 +110,7 @@ class StarPower(BaseEstimator, TransformerMixin):
         self.director_df = None
         self.actor_df = None
 
-    def fit(self, X, y):
+    def fit(self, X, y=None):
         self.director_df = self._get_star_df(X, 'directors')
         self.actor_df = self._get_star_df(X, 'actors')
         return self
@@ -108,6 +122,7 @@ class StarPower(BaseEstimator, TransformerMixin):
 
 if __name__ == '__main__':
     pd.options.mode.chained_assignment = None
+    simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
     path = dirname(dirname(abspath(__file__))) + '/extract_data/pickled_data/'
     with open(path + 'features.pickle', 'rb') as f:
         df = pickle.load(f)
@@ -119,7 +134,9 @@ if __name__ == '__main__':
     X = data.drop(columns=['opening_revenue'])
     y = data['opening_revenue']
     y = y.apply(np.log)
-    X['budget'] = X['budget'].apply(np.log)
+    # X['budget'] = X['budget'].apply(np.log)
+
+    # StarPower().fit(data).transform(data).to_csv('power_feats.csv')
 
     categorical_cols = [
         'release_day',
@@ -133,13 +150,13 @@ if __name__ == '__main__':
         'budget',
         'runtime_minutes',
         'director_power',
-        # 'actor_power' # CONFIRMED TO BE MALADAPTIVE
+        'actor_power' # CONFIRMED TO BE MALADAPTIVE
     ]
     genre_cols = [col_name for col_name in X if 'genre_' in col_name]
     ct = make_column_transformer(
         (StandardScaler(), numerical_cols),
         (OneHotEncoder(handle_unknown='ignore'), categorical_cols),
-        ('passthrough', genre_cols)
+        ('drop', genre_cols)
     )
 
 
@@ -172,7 +189,7 @@ if __name__ == '__main__':
             y_pred = pipeline.predict(X.iloc[test_indices])
             y_pred[y_pred < 0] = 0
             fold_stats = get_metrics(y.iloc[test_indices], y_pred)
-            print_metrics(fold_stats)
+            # print_metrics(fold_stats)
             stats_sum.update(Counter(fold_stats))
             n += 1
         stats = {k: v / n for k, v in stats_sum.items()}
@@ -181,7 +198,7 @@ if __name__ == '__main__':
 
     # Base test
     print('Lin Reg')
-    # test_model(LinearRegression(), X, y)
+    test_model(LinearRegression(), X, y)
 
     print('Ridge Regression')
     test_model(Ridge(alpha=5), X, y)
@@ -203,19 +220,19 @@ if __name__ == '__main__':
 
     print('SVR')
     # test_model(SVR(C=100.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y) # FINAL
-    test_model(SVR(C=10.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y) # BASELINE
-    # pipeline = get_pipeline(SVR())
-    # pg = {'svr__C': np.logspace(-4, 4, 9), 'svr__gamma': np.logspace(-4, 2, 7),
-    #       'svr__epsilon': [0, 0.01, 0.1, 0.5, 1, 2, 4], 'svr__kernel': ['rbf', 'sigmoid']}
-    #
-    # opt = GridSearchCV(pipeline, pg, n_jobs=-1, cv=TimeSeriesSplit(), verbose=3, scoring="r2")
-    # opt.fit(X, y)
-    # print(opt.best_params_)
-    # print(opt.best_score_)
+    test_model(SVR(C=10.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y)  # BASELINE
+    pipeline = get_pipeline(SVR())
+    pg = {'svr__C': np.logspace(-4, 4, 9), 'svr__gamma': np.logspace(-4, 2, 7),
+          'svr__epsilon': [0, 0.01, 0.1, 0.5, 1, 2, 4], 'svr__kernel': ['rbf', 'sigmoid']}
+
+    opt = GridSearchCV(pipeline, pg, n_jobs=-1, cv=TimeSeriesSplit(), verbose=3, scoring="r2")
+    opt.fit(X, y)
+    print(opt.best_params_)
+    print(opt.best_score_)
 
     print('LinearSVR')
     # test_model(LinearSVR(C=1.0, epsilon=1), X, y)
-    test_model(LinearSVR(C=1.0, epsilon=.5), X, y) # GENRES FINAL
+    test_model(LinearSVR(C=1.0, epsilon=.5), X, y)  # GENRES FINAL
 
     # pipeline = get_pipeline(LinearSVR())
     # lin_grid_reg = GridSearchCV(pipeline, {'linearsvr__C': np.logspace(-4, 4, 9),
