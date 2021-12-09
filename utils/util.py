@@ -1,8 +1,5 @@
-import datetime
-import math
 from os.path import dirname, abspath
 
-import numpy as np
 import pandas as pd
 
 
@@ -22,12 +19,7 @@ def adjust_for_inflation(cpi_df: pd.DataFrame, value: float, from_month: int, fr
 
 
 def get_cpi_df() -> pd.DataFrame:
-    cpi_df = pd.read_csv(f'{dirname(dirname(abspath(__file__)))}\\extract_data\\data\\cpi_data.csv', header=0,
+    cpi_df = pd.read_csv(f'{dirname(dirname(abspath(__file__)))}\\data\\cpi_data.csv', header=0,
                          encoding='utf-8')
     cpi_df = cpi_df.drop(columns=['Series ID', 'Label'])
     return cpi_df
-
-
-
-
-

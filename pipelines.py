@@ -4,13 +4,11 @@
 # See: https://docs.scrapy.org/en/latest/topics/item-pipeline.html
 
 
-# useful for handling different item types with a single interface
-from itemadapter import ItemAdapter
-from pydispatch import dispatcher
-import pandas as pd
-from scrapy import signals
-import csv
 import pickle
+
+import pandas as pd
+from pydispatch import dispatcher
+from scrapy import signals
 
 
 class BoxOfficePipeline:

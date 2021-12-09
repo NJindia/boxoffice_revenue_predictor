@@ -2,7 +2,6 @@
 import math
 import pickle
 from collections import Counter
-from datetime import datetime
 from os.path import dirname, abspath
 from warnings import simplefilter
 
@@ -12,7 +11,7 @@ from sklearn import metrics
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.compose import make_column_transformer
 from sklearn.linear_model import Ridge, Lasso, LinearRegression
-from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.svm import LinearSVR, SVR
@@ -48,14 +47,14 @@ class FeatureRemove(BaseEstimator, TransformerMixin):
 # DO BEFORE SCALING
 class StarPower(BaseEstimator, TransformerMixin):
     def _get_average_power(self, nconsts: list, star_df: pd.DataFrame, year):
-        # TODO ONLY GET FOR PREVIOUS YEARS WORK PER TITLE
         total = 0
         n = 0
         for nconst in nconsts:
             powers = star_df.loc[star_df['star'] == nconst]
             valid = powers.loc[powers['year'] < year]
             if len(valid) != 0:
-                wciars = [math.log(iar * math.pow(.8, year - m_year)) for iar, m_year in zip(valid['revenue'], valid['year'])]
+                wciars = [math.log(iar * math.pow(.8, year - m_year)) for iar, m_year in
+                          zip(valid['revenue'], valid['year'])]
                 power = (np.array(wciars).sum())
                 # power = valid['revenue'].sum()
                 total += power
@@ -106,14 +105,16 @@ class StarPower(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         X_train_power = self._add_star_powers(X, self.director_df, self.actor_df)
-        # X_train_power['actor_power'] = X_train_power['actor_power'].fillna(X_train_power['actor_power'].mean())
-        X_train_power['director_power'] = X_train_power['director_power'].fillna(X_train_power['director_power'].mean())
+        # X_train_power['actor_power'] = X_train_power['actor_power'].fillna(X_train_power['actor_power'].median())
+        X_train_power['director_power'] = X_train_power['director_power'].fillna(
+            X_train_power['director_power'].median())
         return X_train_power.drop(columns=['domestic_revenue'])
+
 
 if __name__ == '__main__':
     pd.options.mode.chained_assignment = None
     simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
-    path = dirname(dirname(abspath(__file__))) + '/extract_data/pickled_data/'
+    path = dirname(abspath(__file__)) + '/extract_data/pickled_data/'
     with open(path + 'features.pickle', 'rb') as f:
         df = pickle.load(f)
     with open(path + 'movie_data.pickle', 'rb') as f:
@@ -124,9 +125,9 @@ if __name__ == '__main__':
     X = data.drop(columns=['opening_revenue'])
     y = data['opening_revenue']
     y = y.apply(np.log)
-    # X['budget'] = X['budget'].apply(np.log)
+    X['budget'] = X['budget'].apply(np.log)
 
-    # StarPower().fit(data).transform(data).to_csv('power_feats.csv')
+    # StarPower().fit(data).transform(data).to_csv('power_feats2.csv') # FOR PAPER GRPAH
 
     categorical_cols = [
         'release_day',
@@ -209,16 +210,16 @@ if __name__ == '__main__':
     # print(lasso_grid.best_score_)
 
     print('SVR')
-    test_model(SVR(C=100.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y) # FINAL
-    test_model(SVR(C=10.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y)  # BASELINE
-    pipeline = get_pipeline(SVR())
-    pg = {'svr__C': np.logspace(-4, 4, 9), 'svr__gamma': np.logspace(-4, 2, 7),
-          'svr__epsilon': [0, 0.01, 0.1, 0.5, 1, 2, 4], 'svr__kernel': ['rbf', 'sigmoid']}
-
-    opt = GridSearchCV(pipeline, pg, n_jobs=-1, cv=TimeSeriesSplit(), verbose=3, scoring="r2")
-    opt.fit(X, y)
-    print(opt.best_params_)
-    print(opt.best_score_)
+    test_model(SVR(C=100.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y)  # FINAL
+    # test_model(SVR(C=10.0, epsilon=0.1, gamma=0.01, kernel='rbf'), X, y)  # BASELINE
+    # pipeline = get_pipeline(SVR())
+    # pg = {'svr__C': np.logspace(-4, 4, 9), 'svr__gamma': np.logspace(-4, 2, 7),
+    #       'svr__epsilon': [0, 0.01, 0.1, 0.5, 1, 2, 4], 'svr__kernel': ['rbf', 'sigmoid']}
+    #
+    # opt = GridSearchCV(pipeline, pg, n_jobs=-1, cv=TimeSeriesSplit(), verbose=3, scoring="r2")
+    # opt.fit(X, y)
+    # print(opt.best_params_)
+    # print(opt.best_score_)
 
     print('LinearSVR')
     # test_model(LinearSVR(C=1.0, epsilon=1), X, y)

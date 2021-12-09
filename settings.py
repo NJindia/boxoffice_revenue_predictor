@@ -9,8 +9,8 @@
 
 BOT_NAME = 'extract_data'
 
-SPIDER_MODULES = ['extract_data.spiders']
-NEWSPIDER_MODULE = 'extract_data.spiders'
+SPIDER_MODULES = ['spiders']
+NEWSPIDER_MODULE = 'spiders'
 
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = True
