@@ -2,12 +2,14 @@
 
 `git clone https://github.com/NJindia/boxoffice_revenue_predictor`
 
-## To create and activate virtual environment
-
-```
-.\venv\Scripts\activate
-```
-
+## To create and activate virtual environment 
+  1. Create Virtual Environment (Windows Only)  
+  `cd ./boxoffice_revenue_predictor`  
+  `pip install virtualenv`  
+  `virtualenv venv`  
+  `.\venv\Scripts\activate`
+  2. Installing Dependencies  
+  `pip install -r requirements.txt`
 ## To run data collection:
 
 `python extract_data.py [options]`
